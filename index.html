@@ -63,9 +63,16 @@
     <div id="joystick-base" class="joystick-base">
       <div id="joystick-knob" class="joystick-knob"></div>
     </div>
+    <button id="btn-jump" class="jump-btn" title="Springen">⬆️</button>
 
     <div id="power-select-row" class="power-select-row"></div>
-    <button id="btn-cast" class="cast-btn">🔥</button>
+    <div class="cast-wrap">
+      <svg class="charge-ring" viewBox="0 0 100 100" aria-hidden="true">
+        <circle class="charge-ring-bg" cx="50" cy="50" r="44"></circle>
+        <circle id="charge-ring-fill" class="charge-ring-fill" cx="50" cy="50" r="44"></circle>
+      </svg>
+      <button id="btn-cast" class="cast-btn">🔥</button>
+    </div>
   </section>
 
   <!-- ===== PAUSE-MENÜ ===== -->

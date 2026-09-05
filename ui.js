@@ -101,6 +101,14 @@
     lastHp = hp;
   }
 
+  /* ---------- Cast charge ring ---------- */
+  const CHARGE_CIRC = 2 * Math.PI * 44;
+  function updateCharge(frac) {
+    const ring = $('#charge-ring-fill');
+    if (ring) ring.style.strokeDashoffset = String(CHARGE_CIRC * (1 - frac));
+    $('#btn-cast').classList.toggle('charging', frac > 0.05);
+  }
+
   /* ---------- Toasts (lightweight, non-blocking) ---------- */
   function toast(text) {
     const el = document.createElement('div');
@@ -381,6 +389,6 @@
     }
   }
 
-  window.G.ui = { toast, queueAchievements, updateHud, updateHealth };
+  window.G.ui = { toast, queueAchievements, updateHud, updateHealth, updateCharge };
   document.addEventListener('DOMContentLoaded', init);
 })();

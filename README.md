@@ -1,21 +1,26 @@
 # Überheld
 
-Ein Ego-Perspektive-Rollenspiel für Kinder: Erschaffe deinen eigenen Helden und steuere ihn in echter 3D-Ich-Perspektive durch eine magische Fantasy-Welt. Besiege umherstreifende, dich verfolgende Wicht-Füchse, sammle Sterne ⭐ und schalte damit immer stärkere Superkräfte frei – bis du zum mächtigsten **ÜBERHELD** aufgestiegen bist!
+Ein Ego-Perspektive-Rollenspiel für Kinder: Erschaffe deinen eigenen Helden und steuere ihn in echter 3D-Ich-Perspektive durch eine **unendlich große**, magische Fantasy-Welt. Besiege umherstreifende, dich verfolgende Wicht-Füchse, sammle Sterne ⭐ und schalte damit immer stärkere Superkräfte frei – bis du zum mächtigsten **ÜBERHELD** aufgestiegen bist!
 
 ## Features
 
 - 🦸 Eigener Held mit wählbarem Aussehen und Namen
-- 🎮 Echte 3D-Ego-Perspektive: Joystick zum Laufen, Wischen zum Umschauen, Button zum Zaubern
+- 🎮 Echte 3D-Ego-Perspektive: Joystick zum Laufen, Wischen zum Umschauen, Button zum Springen, Button zum Zaubern
+- ♾️ **Unendliche, dynamisch generierte Welt**: das Gelände wird rund um den Spieler in Kacheln nachgeladen, während er läuft – es gibt kein Ende der Welt, jede Himmelsrichtung führt zu neuem Terrain, neuen Bergen, Seen und Gegnern
+- 🌳🌿🪨💎 Viel dichtere, abwechslungsreichere Landschaft: Bäume, Büsche, Felsen und Kristalle sind über die ganze Welt verstreut statt an wenigen festen Stellen
+- 💎 **Interaktive Energiekristalle**: die früher rein dekorativen Kristalle lassen sich jetzt berühren – sie geben Sterne und laden sich danach wieder auf (ca. alle 20 Sekunden)
+- 🦘 **Sprung-Steuerung**: mit dem Sprung-Button über Hügel und Kanten hüpfen
+- 🌟 **Auflade-Megakraft**: den Zauber-Button gedrückt halten lädt einen mächtigen, größeren Mega-Zauber auf, der beim Loslassen mehrere Gegner auf einmal treffen kann und den Bildschirm erzittern lässt – kurz antippen feuert wie gewohnt einen normalen Schuss
 - 🦊 Bewegte, animierte Gegner mit echter KI: sie streifen umher, bemerken den Spieler, verfolgen ihn (mit Lauf-Animation) und greifen aus der Nähe an
 - ❤️ Herzen-/Gesundheitssystem: Kontakt mit Gegnern kostet Herzen (mit kurzer Unverwundbarkeit danach), Herzen regenerieren automatisch – bei 0 gibt es eine kurze Verschnaufpause statt eines "Game Over"
 - 🔥❄️⚡💪🌈🦋 Sechs Superkräfte mit jeweils eigenem Aussehen: Feuerball mit Funkenspur, Eiskristall mit Frostsplittern, blitzschneller Blitzpfeil, wuchtiger Kraftbrocken mit Bildschirm-Erschütterung, Regenbogenring mit farbwechselnder Spur und ein Federwirbel – jede Kraft von Stufe 1 bis 5 ausbaubar, mit großzügigem Ziel-Lock-on
-- 🏔️ Echtes 3D-Gelände mit mehreren Höhenebenen: ein begehbares Bergpanorama rings um ein flaches Tal, dazu ein gewundener, fließender Fluss, der sich durchs Gelände schlängelt
-- ⭐ Belohnungssystem: Sterne durch besiegte Gegner und eingesammelte Sternchen verdienen, in Kräfte investieren
+- 🏔️ Echtes, prozedural erzeugtes 3D-Gelände mit mehreren Höhenebenen: Berge, Täler und überall verteilte Seen/Flussarme, die sich per Rauschfeld durch die ganze unendliche Welt ziehen
+- ⭐ Belohnungssystem: Sterne durch besiegte Gegner, eingesammelte Sternchen und aufgeladene Kristalle verdienen, in Kräfte investieren
 - 👑 Aufsteigendes Rangsystem (Anfänger → Kraftpaket → Held → Superheld → Meisterheld → ÜBERHELD)
 - 🏆 Sammelbare Erfolge
 - 🎯 Sehr einfacher Schwierigkeitsgrad: keine echte Verlierbedingung, Schutzzeit beim Start, ständige kleine Belohnungen
-- 🎨 Deutlich verbesserte 3D-Grafik auf Basis von **three.js**: echtes Terrain mit Bergen/Fluss, Materialien, Schatten, Nebel, Punktlicht an den Kristallen, ein animiertes 3D-Fuchsmodell, ein echtes Baummodell mit magischen Glow-Blüten und leuchtende Glow-Sprites
-- 📱 Vollständig touch-optimiert für Handy und Tablet, als installierbare Web-App (PWA), auch offline spielbar; für flüssige Performance auf mehr Geräten optimiert (begrenzte Pixel-Dichte, kompakte Schatten)
+- 🎨 Deutlich verbesserte 3D-Grafik auf Basis von **three.js**: dynamisch nachladendes Terrain mit Bergen/Seen, Materialien, Schatten, Nebel, Punktlicht an den Kristallen, ein animiertes 3D-Fuchsmodell, ein echtes Baummodell mit magischen Glow-Blüten und leuchtende Glow-Sprites
+- 📱 Vollständig touch-optimiert für Handy und Tablet, als installierbare Web-App (PWA), auch offline spielbar; für flüssige Performance auf mehr Geräten optimiert (begrenzte Pixel-Dichte, kompakte Schatten, geteilte Materialien für die nachgeladenen Gelände-Kacheln)
 - 💾 Fortschritt wird automatisch lokal gespeichert
 
 ## Grafik- & Code-Credits

@@ -25,12 +25,26 @@ function angleDiff(from, to) {
   if (d < -Math.PI) d += Math.PI * 2;
   return d;
 }
+function chunkHash(cx, cz) {
+  return (((cx * 374761393) ^ (cz * 668265263)) >>> 0);
+}
 
 const MONSTER_TINTS = {
   green: 0x57d68d, blue: 0x4fc3f7, purple: 0xb085f5, orange: 0xffab5e,
 };
 const MAX_HEALTH = 5;
-const PLAY_RADIUS = 17;
+
+// World streaming: the terrain/decor is generated in square chunks around the
+// player and old chunks are disposed as the player wanders off — this is what
+// makes the world effectively infinite instead of a fixed bounded island.
+const CHUNK_SIZE = 24;
+const CHUNK_SEGS = 12;
+const VIEW_RADIUS = 2; // chunks in every direction kept loaded (5x5 grid)
+const WATER_LEVEL = -0.6;
+const GRAVITY = 22;
+const JUMP_SPEED = 7.6;
+const CHARGE_MIN_MS = 180;
+const CHARGE_MAX_MS = 1200;
 
 // Distinct look & feel per superpower: projectile shape/color, trail sprites
 // and an impact burst profile (particle count/speed/colors/gravity).
@@ -67,21 +81,25 @@ const POWER_VISUALS = {
   },
 };
 
+const CRYSTAL_BURST = { count: 10, speed: [2, 4], colors: [0x9d7bff, 0xffffff, 0xb385ff], gravity: 2, spreadUp: 0.5 };
+
 const World = {
   canvas: null, scene: null, camera: null, renderer: null,
   clock: new THREE.Clock(),
-  decor: [], monsters: [], stars: [], projectiles: [], particles: [],
+  chunks: new Map(), interactiveDecor: [],
+  monsters: [], stars: [], projectiles: [], particles: [],
   player: { pos: new THREE.Vector3(0.3, 1.6, 6.4), yaw: Math.PI, pitch: 0 },
   running: false, paused: false,
   move: { x: 0, z: 0 },
   look: { active: false, pointerId: null, lastX: 0, lastY: 0 },
   joy: { active: false, pointerId: null, cx: 0, cy: 0 },
-  castCooldown: 0,
-  worldRadius: 40,
+  castCooldown: 0, charging: false, chargeStart: 0,
+  vy: 0, grounded: true, jumpOffset: 0, jumpRequested: false,
   bobPhase: 0,
   health: MAX_HEALTH, lastHitAt: 0, lastRegenAt: 0, invulnUntil: 0,
-  foxTemplate: null, foxClips: null,
+  treeReady: false, pendingTrees: [], foxTemplate: null, foxClips: null,
   shakeTime: 0, shakeMag: 0,
+  _lastChunkX: null, _lastChunkZ: null,
   _v1: new THREE.Vector3(), _v2: new THREE.Vector3(),
   _noise: new ImprovedNoise(),
   projGeo: {},
@@ -89,10 +107,10 @@ const World = {
   init(canvas) {
     this.canvas = canvas;
     const scene = new THREE.Scene();
-    scene.fog = new THREE.Fog(0x5b3a8f, 16, this.worldRadius + 8);
+    scene.fog = new THREE.Fog(0x5b3a8f, 16, VIEW_RADIUS * CHUNK_SIZE + 26);
     this.scene = scene;
 
-    const camera = new THREE.PerspectiveCamera(69, canvas.clientWidth / canvas.clientHeight, 0.1, 110);
+    const camera = new THREE.PerspectiveCamera(69, canvas.clientWidth / canvas.clientHeight, 0.1, VIEW_RADIUS * CHUNK_SIZE + 46);
     this.camera = camera;
 
     let renderer;
@@ -109,14 +127,16 @@ const World = {
 
     this.buildSky();
     this.buildLights();
-    this.buildTerrain();
-    this.buildRiver();
-    this.buildDecor();
+    this.buildTerrainMaterial();
+    this.buildWater();
+    this.buildDecorTemplates();
     this.buildProjectileGeometries();
+    this.buildChargeOrb();
     this.loadTreeModel();
     this.loadFoxModel();
 
-    for (let i = 0; i < 5; i++) this.spawnMonsterSlot(1 + i * 0.4);
+    this.updateChunks(true);
+    for (let i = 0; i < 6; i++) this.spawnMonsterSlot(1 + i * 0.4);
     for (let i = 0; i < 6; i++) this.spawnStar(0);
 
     this.setupInput();
@@ -124,111 +144,123 @@ const World = {
     return true;
   },
 
-  /* ---------------- terrain: layered noise, mountains at the rim, a carved river ---------------- */
+  /* ---------------- terrain: layered noise, infinite rolling hills, veins of rivers/lakes ---------------- */
 
-  fbm(x, z, octaves) {
+  fbm(x, z, octaves, seed) {
     let amp = 1, freq = 1, sum = 0, norm = 0;
+    const s = seed || 4.7;
     for (let o = 0; o < octaves; o++) {
-      sum += this._noise.noise(x * freq, z * freq, 4.7) * amp;
+      sum += this._noise.noise(x * freq, z * freq, s) * amp;
       norm += amp;
       amp *= 0.5;
       freq *= 2.15;
     }
     return sum / norm;
   },
-  riverCenterX(z) {
-    return Math.sin(z * 0.05) * 9 + Math.sin(z * 0.011) * 6;
-  },
   heightAt(x, z) {
-    const r = Math.hypot(x, z);
-    const mountainMask = smoothstep(PLAY_RADIUS, this.worldRadius * 0.92, r);
-    const n = this.fbm(x * 0.045, z * 0.045, 5);
-    let h = mountainMask * (n * 0.5 + 0.5) * 13;
-    h += (1 - mountainMask) * Math.max(0, n) * 0.7;
-
-    const halfWidth = 3.2;
-    const dist = Math.abs(x - this.riverCenterX(z));
-    const riverInfluence = 1 - smoothstep(0, halfWidth, dist);
-    h -= riverInfluence * 1.8;
+    const macro = this.fbm(x * 0.006, z * 0.006, 5, 4.7);
+    const detail = this.fbm(x * 0.05 + 500, z * 0.05 + 500, 4, 9.3);
+    let h = 4.5 + macro * 6.5 + detail * 1.3;
+    const rn = this.fbm(x * 0.014 + 3000, z * 0.014 + 3000, 3, 6.1);
+    const riverBand = 1 - smoothstep(0, 0.085, Math.abs(rn));
+    h -= riverBand * 4.2;
     return h;
   },
+  biomeColor(h, riverT, out) {
+    const cLow = World._cLow, cMid = World._cMid, cHigh = World._cHigh, cSnow = World._cSnow, cRiverBed = World._cRiverBed;
+    let col;
+    if (h < -0.6) col = cRiverBed.clone();
+    else if (h < 1.2) col = cLow.clone().lerp(cMid, smoothstep(-0.6, 1.2, h));
+    else if (h < 6) col = cMid.clone().lerp(cHigh, smoothstep(1.2, 6, h));
+    else col = cHigh.clone().lerp(cSnow, smoothstep(6, 10.5, h));
+    col.lerp(cRiverBed, riverT * 0.6);
+    return col;
+  },
 
-  buildTerrain() {
-    const size = this.worldRadius * 2;
-    const segs = 64;
-    const geo = new THREE.PlaneGeometry(size, size, segs, segs);
+  buildTerrainMaterial() {
+    this._cLow = new THREE.Color(0x8a7ac0);
+    this._cMid = new THREE.Color(0x8d9a68);
+    this._cHigh = new THREE.Color(0xaeaeb8);
+    this._cSnow = new THREE.Color(0xf0edf7);
+    this._cRiverBed = new THREE.Color(0x4a3f7a);
+    const tex = new THREE.TextureLoader().load('assets/ground_arcane.jpg');
+    tex.wrapS = THREE.RepeatWrapping; tex.wrapT = THREE.RepeatWrapping;
+    tex.repeat.set(CHUNK_SIZE / 8, CHUNK_SIZE / 8);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    this.terrainMat = new THREE.MeshStandardMaterial({ map: tex, vertexColors: true, roughness: 0.95, metalness: 0.04 });
+  },
+
+  buildWater() {
+    const geo = new THREE.PlaneGeometry(1, 1);
+    geo.rotateX(-Math.PI / 2);
+    const mat = new THREE.MeshStandardMaterial({
+      color: 0x4fa8dd, transparent: true, opacity: 0.72, roughness: 0.1, metalness: 0.05,
+      emissive: 0x3f8ecf, emissiveIntensity: 0.55, depthWrite: false,
+    });
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.scale.set(420, 1, 420);
+    mesh.position.y = WATER_LEVEL;
+    mesh.renderOrder = 1;
+    this.scene.add(mesh);
+    this.water = mesh;
+  },
+
+  buildChunk(cx, cz) {
+    const key = cx + ',' + cz;
+    if (this.chunks.has(key)) return;
+    const originX = cx * CHUNK_SIZE, originZ = cz * CHUNK_SIZE;
+    const geo = new THREE.PlaneGeometry(CHUNK_SIZE, CHUNK_SIZE, CHUNK_SEGS, CHUNK_SEGS);
     geo.rotateX(-Math.PI / 2);
     const pos = geo.attributes.position;
     const colors = new Float32Array(pos.count * 3);
-    const cLow = new THREE.Color(0x8a7ac0), cMid = new THREE.Color(0x8d9a68), cHigh = new THREE.Color(0xaeaeb8), cSnow = new THREE.Color(0xf0edf7), cRiverBed = new THREE.Color(0x4a3f7a);
+    const tmpColor = new THREE.Color();
     for (let i = 0; i < pos.count; i++) {
-      const x = pos.getX(i), z = pos.getZ(i);
-      const h = this.heightAt(x, z);
+      const lx = pos.getX(i), lz = pos.getZ(i);
+      const wx = originX + lx, wz = originZ + lz;
+      const h = this.heightAt(wx, wz);
       pos.setY(i, h);
-
-      const dist = Math.abs(x - this.riverCenterX(z));
-      const riverT = 1 - smoothstep(0, 3.2, dist);
-      let col;
-      if (h < -0.6) col = cRiverBed.clone();
-      else if (h < 1.2) col = cLow.clone().lerp(cMid, smoothstep(-0.6, 1.2, h));
-      else if (h < 6) col = cMid.clone().lerp(cHigh, smoothstep(1.2, 6, h));
-      else col = cHigh.clone().lerp(cSnow, smoothstep(6, 10.5, h));
-      col.lerp(cRiverBed, riverT * 0.6);
-      colors[i * 3] = col.r; colors[i * 3 + 1] = col.g; colors[i * 3 + 2] = col.b;
+      const rn = this.fbm(wx * 0.014 + 3000, wz * 0.014 + 3000, 3, 6.1);
+      const riverT = 1 - smoothstep(0, 0.1, Math.abs(rn));
+      tmpColor.copy(this.biomeColor(h, riverT));
+      colors[i * 3] = tmpColor.r; colors[i * 3 + 1] = tmpColor.g; colors[i * 3 + 2] = tmpColor.b;
     }
     geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
     geo.computeVertexNormals();
+    const mesh = new THREE.Mesh(geo, this.terrainMat);
+    mesh.position.set(originX, 0, originZ);
+    mesh.receiveShadow = true;
+    this.scene.add(mesh);
 
-    const tex = new THREE.TextureLoader().load('assets/ground_arcane.jpg');
-    tex.wrapS = THREE.RepeatWrapping; tex.wrapT = THREE.RepeatWrapping;
-    tex.repeat.set(size / 8, size / 8);
-    tex.colorSpace = THREE.SRGBColorSpace;
-    const mat = new THREE.MeshStandardMaterial({ map: tex, vertexColors: true, roughness: 0.95, metalness: 0.04 });
-    const ground = new THREE.Mesh(geo, mat);
-    ground.receiveShadow = true;
-    this.scene.add(ground);
-    this.terrain = ground;
-
-    const ringGeo = new THREE.RingGeometry(2, 6, 40);
-    const ringMat = new THREE.MeshBasicMaterial({ color: 0xffd76a, transparent: true, opacity: 0.16, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide });
-    const ring = new THREE.Mesh(ringGeo, ringMat);
-    ring.rotation.x = -Math.PI / 2;
-    ring.position.y = this.heightAt(0, 0) + 0.04;
-    this.scene.add(ring);
+    const decorGroup = new THREE.Group();
+    this.scene.add(decorGroup);
+    this.chunks.set(key, { mesh, decorGroup, cx, cz });
+    this.populateChunkDecor(cx, cz, decorGroup, originX, originZ, key);
   },
 
-  buildRiver() {
-    const halfWidth = 2.5;
-    const steps = 64;
-    const positions = [];
-    const uvs = [];
-    for (let i = 0; i <= steps; i++) {
-      const z = -this.worldRadius + (i / steps) * this.worldRadius * 2;
-      const cx = this.riverCenterX(z);
-      const y = this.heightAt(cx, z) + 0.18;
-      positions.push(cx - halfWidth, y, z, cx + halfWidth, y, z);
-      uvs.push(0, i / 4, 1, i / 4);
+  disposeChunk(key) {
+    const c = this.chunks.get(key);
+    if (!c) return;
+    this.scene.remove(c.mesh);
+    c.mesh.geometry.dispose();
+    this.scene.remove(c.decorGroup);
+    this.chunks.delete(key);
+    this.interactiveDecor = this.interactiveDecor.filter(e => e.chunkKey !== key);
+  },
+
+  updateChunks(force) {
+    const p = this.player.pos;
+    const ccx = Math.round(p.x / CHUNK_SIZE), ccz = Math.round(p.z / CHUNK_SIZE);
+    if (!force && ccx === this._lastChunkX && ccz === this._lastChunkZ) return;
+    this._lastChunkX = ccx; this._lastChunkZ = ccz;
+    for (let dz = -VIEW_RADIUS; dz <= VIEW_RADIUS; dz++) {
+      for (let dx = -VIEW_RADIUS; dx <= VIEW_RADIUS; dx++) {
+        this.buildChunk(ccx + dx, ccz + dz);
+      }
     }
-    const indices = [];
-    for (let i = 0; i < steps; i++) {
-      const a = i * 2, b = i * 2 + 1, c = i * 2 + 2, d = i * 2 + 3;
-      indices.push(a, c, b, b, c, d);
+    const keep = VIEW_RADIUS + 1;
+    for (const [key, c] of this.chunks) {
+      if (Math.abs(c.cx - ccx) > keep || Math.abs(c.cz - ccz) > keep) this.disposeChunk(key);
     }
-    const geo = new THREE.BufferGeometry();
-    geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
-    geo.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
-    geo.setIndex(indices);
-    geo.computeVertexNormals();
-    const tex = new THREE.TextureLoader().load('assets/glow.png');
-    tex.wrapS = THREE.RepeatWrapping; tex.wrapT = THREE.RepeatWrapping;
-    tex.repeat.set(1, 8);
-    const mat = new THREE.MeshStandardMaterial({
-      color: 0x2f7bb0, transparent: true, opacity: 0.75, roughness: 0.25, metalness: 0.1,
-      emissive: 0x0e3a55, emissiveIntensity: 0.4, alphaMap: tex,
-    });
-    const river = new THREE.Mesh(geo, mat);
-    this.scene.add(river);
-    this.riverTex = tex;
   },
 
   /* ---------------- sky / lights ---------------- */
@@ -249,21 +281,24 @@ const World = {
     const mat = new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.BackSide, fog: false, depthWrite: false });
     const sky = new THREE.Mesh(geo, mat);
     sky.renderOrder = -10;
-    this.scene.add(sky);
 
+    const skyGroup = new THREE.Group();
+    skyGroup.add(sky);
     const moon = this.makeGlowSprite(0xffe0c2, 9, 1);
     moon.position.set(-22, 16, -58);
-    this.scene.add(moon);
+    skyGroup.add(moon);
+    this.scene.add(skyGroup);
+    this.skyGroup = skyGroup;
   },
 
   buildLights() {
-    const hemi = new THREE.HemisphereLight(0xd9b6ff, 0x2a1050, 0.9);
+    const hemi = new THREE.HemisphereLight(0xe8d4ff, 0x5c3f8f, 1.25);
     this.scene.add(hemi);
     const sun = new THREE.DirectionalLight(0xffe3c2, 1.4);
     sun.position.set(14, 22, 10);
     sun.castShadow = true;
     sun.shadow.mapSize.set(768, 768);
-    const d = PLAY_RADIUS + 8;
+    const d = 26;
     sun.shadow.camera.left = -d; sun.shadow.camera.right = d;
     sun.shadow.camera.top = d; sun.shadow.camera.bottom = -d;
     sun.shadow.camera.near = 1; sun.shadow.camera.far = 55;
@@ -304,63 +339,103 @@ const World = {
     });
   },
 
-  /* ---------------- decor ---------------- */
+  buildChargeOrb() {
+    this.chargeOrb = this.makeGlowSprite(0xffffff, 0.4, 0);
+    this.chargeOrb.visible = false;
+    this.scene.add(this.chargeOrb);
+  },
 
-  buildDecor() {
-    const rand = mulberry32(1337);
-    for (let i = 0; i < 16; i++) {
-      const a = rand() * Math.PI * 2;
-      const d = 12 + rand() * (this.worldRadius - 16);
-      const pos = new THREE.Vector3(Math.cos(a) * d, 0, Math.sin(a) * d);
-      pos.y = this.heightAt(pos.x, pos.z);
-      const kind = rand() > 0.5 ? 'crystal' : 'tree';
-      this.decor.push({ kind, pos, rotY: rand() * Math.PI * 2, scale: 0.8 + rand() * 0.7, obj: null });
-    }
-    for (let i = 0; i < 10; i++) {
-      const a = rand() * Math.PI * 2;
-      const d = 9 + rand() * (this.worldRadius - 13);
-      const pos = new THREE.Vector3(Math.cos(a) * d, 0, Math.sin(a) * d);
-      pos.y = this.heightAt(pos.x, pos.z);
-      this.decor.push({ kind: 'rock', pos, rotY: rand() * Math.PI * 2, scale: 0.6 + rand() * 0.9, obj: null });
-    }
+  /* ---------------- decor: trees, bushes, rocks, interactive crystals ---------------- */
 
-    const crystalMat = new THREE.MeshStandardMaterial({ color: 0x9d7bff, emissive: 0x4a2f8f, emissiveIntensity: 0.6, roughness: 0.25, metalness: 0.3 });
-    const crystalBaseMat = new THREE.MeshStandardMaterial({ color: 0x5b3a8f, roughness: 0.7 });
-    const rockMat = new THREE.MeshStandardMaterial({ color: 0x5c5470, roughness: 0.85 });
-    let crystalLights = 0;
-    this.decor.forEach(d => {
-      if (d.kind === 'crystal') {
-        const group = new THREE.Group();
-        const base = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.4, 0.7), crystalBaseMat);
-        base.position.y = 0.2; base.castShadow = true; base.receiveShadow = true;
-        const gem = new THREE.Mesh(new THREE.ConeGeometry(0.6, 1.8, 6), crystalMat);
-        gem.position.y = 0.4 + 0.9; gem.castShadow = true;
-        group.add(base, gem);
-        const glow = this.makeGlowSprite(0xb385ff, 1.6 * d.scale, 0.4);
-        glow.position.y = 1.5;
-        group.add(glow);
-        if (crystalLights < 4) {
-          const pl = new THREE.PointLight(0x9d7bff, 1.2, 6, 2);
-          pl.position.y = 1.2;
-          group.add(pl);
-          crystalLights++;
-        }
-        group.position.copy(d.pos);
-        group.rotation.y = d.rotY;
-        group.scale.setScalar(d.scale);
-        group.add(this.makeShadowBlob(d.scale * 1.8));
-        this.scene.add(group);
-        d.obj = group;
-      } else if (d.kind === 'rock') {
-        const rock = new THREE.Mesh(new THREE.DodecahedronGeometry(0.7, 0), rockMat);
-        rock.position.copy(d.pos); rock.position.y += 0.35 * d.scale;
-        rock.rotation.set(d.rotY * 0.3, d.rotY, d.rotY * 0.6);
-        rock.scale.set(d.scale, d.scale * 0.8, d.scale);
-        rock.castShadow = true; rock.receiveShadow = true;
-        this.scene.add(rock);
-        d.obj = rock;
+  buildDecorTemplates() {
+    this.crystalGemGeo = new THREE.IcosahedronGeometry(0.5, 0);
+    this.crystalBaseGeo = new THREE.BoxGeometry(0.7, 0.4, 0.7);
+    this.crystalMat = new THREE.MeshStandardMaterial({ color: 0x9d7bff, emissive: 0x4a2f8f, emissiveIntensity: 0.6, roughness: 0.25, metalness: 0.3 });
+    this.crystalBaseMat = new THREE.MeshStandardMaterial({ color: 0x5b3a8f, roughness: 0.7 });
+    this.crystalLightCount = 0;
+
+    this.rockGeo = new THREE.DodecahedronGeometry(0.7, 0);
+    this.rockMat = new THREE.MeshStandardMaterial({ color: 0x5c5470, roughness: 0.85 });
+
+    const bushRand = mulberry32(77);
+    const bushPalettes = [0x4f8f5a, 0x5a7a3f, 0x6a5a9a];
+    this.bushTemplates = bushPalettes.map(color => {
+      const mat = new THREE.MeshStandardMaterial({ color, roughness: 0.9 });
+      const group = new THREE.Group();
+      const clumps = 3 + Math.floor(bushRand() * 2);
+      for (let i = 0; i < clumps; i++) {
+        const s = 0.28 + bushRand() * 0.2;
+        const geo = new THREE.IcosahedronGeometry(s, 0);
+        const m = new THREE.Mesh(geo, mat);
+        m.position.set((bushRand() - 0.5) * 0.5, s * 0.7 + bushRand() * 0.1, (bushRand() - 0.5) * 0.5);
+        m.castShadow = true; m.receiveShadow = true;
+        group.add(m);
       }
+      return group;
     });
+  },
+
+  populateChunkDecor(cx, cz, group, originX, originZ, key) {
+    const rand = mulberry32(chunkHash(cx, cz));
+    const count = 2 + Math.floor(rand() * 3);
+    for (let i = 0; i < count; i++) {
+      const lx = (rand() - 0.5) * CHUNK_SIZE;
+      const lz = (rand() - 0.5) * CHUNK_SIZE;
+      const wx = originX + lx, wz = originZ + lz;
+      const h = this.heightAt(wx, wz);
+      if (h < WATER_LEVEL + 0.5) continue;
+      const roll = rand();
+      const kind = roll < 0.32 ? 'tree' : roll < 0.58 ? 'bush' : roll < 0.82 ? 'rock' : 'crystal';
+      const posVec = new THREE.Vector3(wx, h, wz);
+      const rotY = rand() * Math.PI * 2;
+      const scale = 0.7 + rand() * 0.8;
+      this.spawnDecor(kind, posVec, rotY, scale, group, key);
+    }
+  },
+
+  spawnDecor(kind, pos, rotY, scale, group, key) {
+    if (kind === 'tree') {
+      if (this.treeReady) this.instantiateTree(pos, rotY, scale, group);
+      else this.pendingTrees.push({ pos, rotY, scale, group });
+    } else if (kind === 'bush') {
+      const idx = Math.floor(Math.random() * this.bushTemplates.length);
+      const inst = this.bushTemplates[idx].clone(true);
+      inst.position.copy(pos);
+      inst.rotation.y = rotY;
+      inst.scale.setScalar(scale);
+      inst.add(this.makeShadowBlob(1.1 * scale));
+      group.add(inst);
+    } else if (kind === 'rock') {
+      const rock = new THREE.Mesh(this.rockGeo, this.rockMat);
+      rock.position.copy(pos); rock.position.y += 0.35 * scale;
+      rock.rotation.set(rotY * 0.3, rotY, rotY * 0.6);
+      rock.scale.set(scale, scale * 0.8, scale);
+      rock.castShadow = true; rock.receiveShadow = true;
+      group.add(rock);
+    } else if (kind === 'crystal') {
+      const crystalGroup = new THREE.Group();
+      const base = new THREE.Mesh(this.crystalBaseGeo, this.crystalBaseMat);
+      base.position.y = 0.2; base.castShadow = true; base.receiveShadow = true;
+      const gem = new THREE.Mesh(this.crystalGemGeo, this.crystalMat);
+      gem.position.y = 0.2 + 0.65; gem.scale.set(1, 1.9, 1); gem.castShadow = true;
+      crystalGroup.add(base, gem);
+      const glow = this.makeGlowSprite(0xb385ff, 1.6 * scale, 0.45);
+      glow.position.y = 1.3;
+      crystalGroup.add(glow);
+      let light = null;
+      if (this.crystalLightCount < 5) {
+        light = new THREE.PointLight(0x9d7bff, 1.2, 6, 2);
+        light.position.y = 1.1;
+        crystalGroup.add(light);
+        this.crystalLightCount++;
+      }
+      crystalGroup.position.copy(pos);
+      crystalGroup.rotation.y = rotY;
+      crystalGroup.scale.setScalar(scale);
+      crystalGroup.add(this.makeShadowBlob(scale * 1.8));
+      group.add(crystalGroup);
+      this.interactiveDecor.push({ kind: 'crystal', pos: pos.clone(), cooldownUntil: 0, glow, chunkKey: key });
+    }
   },
 
   loadTreeModel() {
@@ -370,7 +445,7 @@ const World = {
       const box = new THREE.Box3().setFromObject(obj);
       const height = box.max.y - box.min.y || 1;
       const targetHeight = 3.6;
-      const scaleFactor = targetHeight / height;
+      this.treeScaleFactor = targetHeight / height;
 
       let blossomLocalPoints = null;
       obj.traverse(c => {
@@ -384,25 +459,29 @@ const World = {
         }
       });
 
-      this.decor.forEach(d => {
-        if (d.kind !== 'tree') return;
-        const inst = obj.clone(true);
-        inst.position.copy(d.pos);
-        inst.rotation.y = d.rotY;
-        inst.scale.setScalar(scaleFactor * d.scale);
-        inst.add(this.makeShadowBlob(1.6 * d.scale));
-        this.scene.add(inst);
-        d.obj = inst;
-        if (blossomLocalPoints) {
-          const colors = [0xffb3e6, 0xc9a8ff, 0xffd9a0];
-          blossomLocalPoints.forEach((p, i) => {
-            const glow = this.makeGlowSprite(colors[i % colors.length], 0.5, 0.85);
-            glow.position.copy(p).multiplyScalar(scaleFactor * d.scale);
-            inst.add(glow);
-          });
-        }
-      });
+      this.treeTemplate = obj;
+      this.treeBlossomPoints = blossomLocalPoints;
+      this.treeReady = true;
+      this.pendingTrees.forEach(t => this.instantiateTree(t.pos, t.rotY, t.scale, t.group));
+      this.pendingTrees = [];
     });
+  },
+
+  instantiateTree(pos, rotY, scale, group) {
+    const inst = this.treeTemplate.clone(true);
+    inst.position.copy(pos);
+    inst.rotation.y = rotY;
+    inst.scale.setScalar(this.treeScaleFactor * scale);
+    inst.add(this.makeShadowBlob(1.6 * scale));
+    group.add(inst);
+    if (this.treeBlossomPoints) {
+      const colors = [0xffb3e6, 0xc9a8ff, 0xffd9a0];
+      this.treeBlossomPoints.forEach((p, i) => {
+        const glow = this.makeGlowSprite(colors[i % colors.length], 0.5, 0.85);
+        glow.position.copy(p).multiplyScalar(this.treeScaleFactor * scale);
+        inst.add(glow);
+      });
+    }
   },
 
   loadFoxModel() {
@@ -459,26 +538,23 @@ const World = {
     m.currentAction = next;
   },
 
-  /* ---------------- spawning ---------------- */
+  /* ---------------- spawning (always relative to the player, since the world is endless) ---------------- */
 
-  randomRingPos(minR, maxR) {
-    const a = Math.random() * Math.PI * 2;
-    const d = minR + Math.random() * (maxR - minR);
-    const x = Math.cos(a) * d, z = Math.sin(a) * d;
-    return new THREE.Vector3(x, this.heightAt(x, z), z);
-  },
-
-  randomMonsterSpawnPos() {
+  randomRingPosAroundPlayer(minR, maxR) {
     for (let tries = 0; tries < 12; tries++) {
-      const pos = this.randomRingPos(6, PLAY_RADIUS + 2);
-      if (pos.distanceTo(this.player.pos) > 11) return pos;
+      const a = Math.random() * Math.PI * 2;
+      const d = minR + Math.random() * (maxR - minR);
+      const x = this.player.pos.x + Math.cos(a) * d, z = this.player.pos.z + Math.sin(a) * d;
+      const h = this.heightAt(x, z);
+      if (h > WATER_LEVEL + 0.3) return new THREE.Vector3(x, h, z);
     }
-    return this.randomRingPos(6, PLAY_RADIUS + 2);
+    const x = this.player.pos.x + minR, z = this.player.pos.z;
+    return new THREE.Vector3(x, this.heightAt(x, z), z);
   },
 
   spawnMonsterSlot(delay) {
     const colors = ['green', 'blue', 'purple', 'orange'];
-    const pos = this.randomMonsterSpawnPos();
+    const pos = this.randomRingPosAroundPlayer(9, 26);
     const m = {
       pos, colorKey: colors[Math.floor(Math.random() * colors.length)],
       alive: false, built: false, group: null,
@@ -491,7 +567,7 @@ const World = {
   },
 
   spawnStar(delay) {
-    const pos = this.randomRingPos(5, PLAY_RADIUS);
+    const pos = this.randomRingPosAroundPlayer(6, 22);
     const glow = this.makeGlowSprite(0xffe08a, 1.7, 0.55);
     const core = new THREE.Mesh(
       new THREE.OctahedronGeometry(0.4, 0),
@@ -569,18 +645,32 @@ const World = {
     this.canvas.addEventListener('pointercancel', endLook);
 
     const castBtn = document.getElementById('btn-cast');
-    let castInterval = null;
     const startCast = (e) => {
       if (this.paused) return;
-      this.fireProjectile();
-      castInterval = setInterval(() => this.fireProjectile(), 420);
+      this.charging = true;
+      this.chargeStart = performance.now();
       e.preventDefault();
     };
-    const stopCast = () => { if (castInterval) { clearInterval(castInterval); castInterval = null; } };
+    const stopCast = () => {
+      if (!this.charging) return;
+      this.charging = false;
+      if (window.G.ui.updateCharge) window.G.ui.updateCharge(0);
+      const held = performance.now() - this.chargeStart;
+      if (held < CHARGE_MIN_MS) this.fireProjectile(0);
+      else this.fireProjectile(Math.min(1, (held - CHARGE_MIN_MS) / (CHARGE_MAX_MS - CHARGE_MIN_MS)));
+    };
     castBtn.addEventListener('pointerdown', startCast);
     castBtn.addEventListener('pointerup', stopCast);
     castBtn.addEventListener('pointercancel', stopCast);
     castBtn.addEventListener('pointerleave', stopCast);
+
+    const jumpBtn = document.getElementById('btn-jump');
+    if (jumpBtn) {
+      jumpBtn.addEventListener('pointerdown', (e) => { if (!this.paused) this.jumpRequested = true; e.preventDefault(); });
+    }
+    window.addEventListener('keydown', (e) => {
+      if (e.code === 'Space' && !this.paused) this.jumpRequested = true;
+    });
 
     window.addEventListener('resize', () => this.resize());
   },
@@ -595,9 +685,11 @@ const World = {
 
   /* ---------------- combat ---------------- */
 
-  fireProjectile() {
+  fireProjectile(chargeFrac) {
+    chargeFrac = chargeFrac || 0;
+    const mega = chargeFrac > 0;
     if (this.castCooldown > performance.now()) return;
-    this.castCooldown = performance.now() + 380;
+    this.castCooldown = performance.now() + (mega ? 500 + chargeFrac * 500 : 380);
     const state = ST.get();
     const powerId = state.activePower;
     if (!(state.powerLevels[powerId] > 0)) return;
@@ -616,14 +708,19 @@ const World = {
       if (d > bestDot) { bestDot = d; target = m; }
     });
     const visual = POWER_VISUALS[powerId];
+    const scale = 1 + chargeFrac * 2.4;
     const mat = new THREE.MeshBasicMaterial({ color: visual.color });
     const mesh = new THREE.Mesh(this.projGeo[powerId], mat);
     if (visual.shape === 'cone') mesh.rotation.x = Math.PI / 2;
-    const glow = this.makeGlowSprite(visual.glow, 1.1, 0.75);
+    mesh.scale.setScalar(scale);
+    const glow = this.makeGlowSprite(visual.glow, (mega ? 1.8 : 1.1) * scale, 0.75);
     mesh.add(glow);
     mesh.position.copy(this.player.pos);
     this.scene.add(mesh);
-    this.projectiles.push({ pos: mesh.position, dir, powerId, visual, life: 2.4, target, obj: mesh, trailTimer: 0 });
+    this.projectiles.push({
+      pos: mesh.position, dir, powerId, visual, life: mega ? 3.2 : 2.4, target, obj: mesh, trailTimer: 0,
+      mega, hitRadiusMul: mega ? (1.6 + chargeFrac * 1.4) : 1,
+    });
   },
 
   onMonsterKilled(m, visual) {
@@ -644,7 +741,7 @@ const World = {
     if (m.group) m.group.visible = false;
     m.state = 'idle';
     m.spawnAt = performance.now() + 3000 + Math.random() * 2200;
-    m.pos = this.randomMonsterSpawnPos();
+    m.pos = this.randomRingPosAroundPlayer(9, 26);
   },
 
   onStarCollected(s) {
@@ -659,7 +756,22 @@ const World = {
     s.alive = false;
     s.group.visible = false;
     s.spawnAt = performance.now() + 4000 + Math.random() * 4000;
-    s.pos = this.randomRingPos(5, PLAY_RADIUS);
+    s.pos = this.randomRingPosAroundPlayer(6, 22);
+  },
+
+  onCrystalCollected(entry, now) {
+    entry.cooldownUntil = now + 20000;
+    const state = ST.get();
+    const reward = 2 + Math.floor(Math.random() * 3);
+    state.stars += reward;
+    state.starsEarnedTotal += reward;
+    ST.save();
+    ST.sfx.pickup();
+    window.G.ui.toast(`💎 +${reward} ⭐`);
+    window.G.ui.updateHud();
+    this.spawnKillBurst(entry.pos, { burst: CRYSTAL_BURST });
+    const newAch = ST.checkAchievements();
+    if (newAch.length) window.G.ui.queueAchievements(newAch);
   },
 
   spawnTrailParticle(pos, color) {
@@ -697,9 +809,6 @@ const World = {
     if (this.health <= 0) {
       this.health = MAX_HEALTH;
       this.invulnUntil = now + 2200;
-      const backHome = this.player.pos.clone().normalize().multiplyScalar(6);
-      if (!isFinite(backHome.x)) backHome.set(0, 0, 6);
-      this.player.pos.x = backHome.x; this.player.pos.z = backHome.z;
       window.G.ui.toast('Kurz verschnauft! 💫');
       window.G.ui.updateHealth(this.health, MAX_HEALTH, false);
     }
@@ -740,10 +849,7 @@ const World = {
           } else {
             const a = Math.random() * Math.PI * 2;
             const d = 3 + Math.random() * 4;
-            const target = this._v2.set(m.pos.x + Math.cos(a) * d, 0, m.pos.z + Math.sin(a) * d);
-            const r = Math.hypot(target.x, target.z);
-            if (r > PLAY_RADIUS + 1) { target.x *= (PLAY_RADIUS + 1) / r; target.z *= (PLAY_RADIUS + 1) / r; }
-            m.wanderTarget = new THREE.Vector3(target.x, 0, target.z);
+            m.wanderTarget = this._v2.set(m.pos.x + Math.cos(a) * d, 0, m.pos.z + Math.sin(a) * d).clone();
           }
         }
       }
@@ -788,13 +894,29 @@ const World = {
       p.pos.z += (moveZ / len) * speed * dt;
       this.bobPhase += dt * 9;
     }
-    const distFromCenter = Math.hypot(p.pos.x, p.pos.z);
-    if (distFromCenter > this.worldRadius - 1.5) {
-      const s = (this.worldRadius - 1.5) / distFromCenter;
-      p.pos.x *= s; p.pos.z *= s;
+
+    if (this.jumpRequested && this.grounded) {
+      this.vy = JUMP_SPEED;
+      this.grounded = false;
+      this.jumpRequested = false;
+      ST.sfx.tap();
     }
+    this.jumpRequested = false;
+    this.vy -= GRAVITY * dt;
+    this.jumpOffset += this.vy * dt;
+    if (this.jumpOffset <= 0) { this.jumpOffset = 0; this.vy = 0; this.grounded = true; }
+
     const groundY = this.heightAt(p.pos.x, p.pos.z);
-    p.pos.y = groundY + 1.6 + Math.sin(this.bobPhase) * 0.04;
+    p.pos.y = groundY + 1.6 + this.jumpOffset + (this.grounded ? Math.sin(this.bobPhase) * 0.04 : 0);
+
+    this.updateChunks(false);
+    if (this.skyGroup) this.skyGroup.position.set(p.pos.x, 0, p.pos.z);
+    if (this.water) { this.water.position.x = p.pos.x; this.water.position.z = p.pos.z; }
+    if (this.sun) {
+      this.sun.position.set(p.pos.x + 14, p.pos.y + 22, p.pos.z + 10);
+      this.sun.target.position.set(p.pos.x, p.pos.y, p.pos.z);
+      this.sun.target.updateMatrixWorld();
+    }
 
     this.camera.position.copy(p.pos);
     if (this.shakeTime > 0) {
@@ -807,9 +929,23 @@ const World = {
     this.camera.rotation.y = p.yaw;
     this.camera.rotation.x = p.pitch;
 
-    if (this.riverTex) this.riverTex.offset.y -= dt * 0.35;
-
     const now = performance.now();
+
+    if (this.charging) {
+      const held = now - this.chargeStart;
+      const frac = held < CHARGE_MIN_MS ? 0 : Math.min(1, (held - CHARGE_MIN_MS) / (CHARGE_MAX_MS - CHARGE_MIN_MS));
+      if (window.G.ui.updateCharge) window.G.ui.updateCharge(frac);
+      const dir2 = this._v1.set(-Math.sin(p.yaw) * Math.cos(p.pitch), Math.sin(p.pitch), -Math.cos(p.yaw) * Math.cos(p.pitch));
+      this.chargeOrb.position.copy(p.pos).addScaledVector(dir2, 1.1);
+      this.chargeOrb.visible = frac > 0;
+      const visual = POWER_VISUALS[ST.get().activePower];
+      this.chargeOrb.material.color.set(visual.glow);
+      this.chargeOrb.material.opacity = 0.5 + frac * 0.4;
+      this.chargeOrb.scale.setScalar(0.3 + frac * 0.9);
+    } else if (this.chargeOrb.visible) {
+      this.chargeOrb.visible = false;
+    }
+
     if (now - this.lastHitAt > 3500 && this.health < MAX_HEALTH && now - this.lastRegenAt > 1800) {
       this.health++;
       this.lastRegenAt = now;
@@ -836,6 +972,15 @@ const World = {
       }
     });
 
+    this.interactiveDecor.forEach(entry => {
+      if (now < entry.cooldownUntil) {
+        if (entry.glow && entry.glow.visible) entry.glow.visible = false;
+        return;
+      }
+      if (entry.glow && !entry.glow.visible) entry.glow.visible = true;
+      if (p.pos.distanceTo(entry.pos) < 1.9) this.onCrystalCollected(entry, now);
+    });
+
     for (let i = this.projectiles.length - 1; i >= 0; i--) {
       const pr = this.projectiles[i];
       if (pr.target && pr.target.alive) {
@@ -858,10 +1003,11 @@ const World = {
       }
 
       let hit = false;
-      const hitR = pr.visual.hitRadius || 2.0;
+      const hitR = (pr.visual.hitRadius || 2.0) * pr.hitRadiusMul;
       this.monsters.forEach(m => {
-        if (!hit && m.alive && m.pos.distanceTo(pr.pos) < hitR) { this.onMonsterKilled(m, pr.visual); hit = true; }
+        if (m.alive && m.pos.distanceTo(pr.pos) < hitR && (pr.mega || !hit)) { this.onMonsterKilled(m, pr.visual); hit = true; }
       });
+      if (hit && pr.mega) { this.shakeTime = 0.3; this.shakeMag = Math.max(this.shakeMag || 0, 0.22); }
       if (hit || pr.life <= 0) { this.scene.remove(pr.obj); this.projectiles.splice(i, 1); }
     }
 
