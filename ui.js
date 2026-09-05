@@ -109,6 +109,16 @@
     $('#btn-cast').classList.toggle('charging', frac > 0.05);
   }
 
+  /* ---------- Crystal damage boost indicator ---------- */
+  let boostTimer = null;
+  function updateBoost(active) {
+    const wrap = document.querySelector('.cast-wrap');
+    if (!wrap) return;
+    wrap.classList.toggle('boosted', active);
+    if (boostTimer) clearTimeout(boostTimer);
+    if (active) boostTimer = setTimeout(() => wrap.classList.remove('boosted'), 8000);
+  }
+
   /* ---------- Toasts (lightweight, non-blocking) ---------- */
   function toast(text) {
     const el = document.createElement('div');
@@ -389,6 +399,6 @@
     }
   }
 
-  window.G.ui = { toast, queueAchievements, updateHud, updateHealth, updateCharge };
+  window.G.ui = { toast, queueAchievements, updateHud, updateHealth, updateCharge, updateBoost };
   document.addEventListener('DOMContentLoaded', init);
 })();

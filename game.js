@@ -29,9 +29,15 @@ function chunkHash(cx, cz) {
   return (((cx * 374761393) ^ (cz * 668265263)) >>> 0);
 }
 
-const MONSTER_TINTS = {
-  green: 0x57d68d, blue: 0x4fc3f7, purple: 0xb085f5, orange: 0xffab5e,
-};
+// Enemy species: each has its own toughness and an elemental weakness/resistance,
+// so picking the right power against the right monster actually matters.
+const MONSTER_TYPES = [
+  { id: 'wicht', name: 'Wicht', tint: 0x57d68d, hp: 2, weak: null, resist: null, model: 'fox', scale: 1, aura: null },
+  { id: 'flammling', name: 'Flammling', tint: 0xff7043, hp: 2, weak: 'eis', resist: 'feuer', model: 'fox', scale: 1, aura: 0xff6b35 },
+  { id: 'frostling', name: 'Frostling', tint: 0x4fc3f7, hp: 2, weak: 'feuer', resist: 'eis', model: 'fox', scale: 1, aura: 0x8fdcff },
+  { id: 'steinling', name: 'Steinling', tint: 0x8d6e63, hp: 3, weak: 'kraft', resist: 'blitz', model: 'fox', scale: 1.3, aura: 0xa1887f },
+  { id: 'schatten', name: 'Schattenschwinge', tint: 0xb085f5, hp: 2, weak: 'flug', resist: 'kraft', model: 'shade', scale: 1, aura: 0x7e57c2 },
+];
 const MAX_HEALTH = 5;
 
 // World streaming: the terrain/decor is generated in square chunks around the
@@ -96,7 +102,7 @@ const World = {
   castCooldown: 0, charging: false, chargeStart: 0,
   vy: 0, grounded: true, jumpOffset: 0, jumpRequested: false,
   bobPhase: 0,
-  health: MAX_HEALTH, lastHitAt: 0, lastRegenAt: 0, invulnUntil: 0,
+  health: MAX_HEALTH, lastHitAt: 0, lastRegenAt: 0, invulnUntil: 0, damageBoostUntil: 0,
   treeReady: false, pendingTrees: [], foxTemplate: null, foxClips: null,
   shakeTime: 0, shakeMag: 0,
   _lastChunkX: null, _lastChunkZ: null,
@@ -496,10 +502,11 @@ const World = {
   },
 
   buildMonsterVisual(m) {
+    if (m.type.model === 'shade') { this.buildShadeVisual(m); return; }
     if (!this.foxTemplate) return;
     const inst = cloneSkeleton(this.foxTemplate);
-    inst.scale.setScalar(this.foxScale);
-    const tint = MONSTER_TINTS[m.colorKey];
+    inst.scale.setScalar(this.foxScale * m.type.scale);
+    const tint = m.type.tint;
     inst.traverse(c => {
       if (c.isMesh) {
         c.material = c.material.clone();
@@ -509,10 +516,11 @@ const World = {
     });
     const group = new THREE.Group();
     group.add(inst);
-    group.add(this.makeShadowBlob(1.5));
+    group.add(this.makeShadowBlob(1.5 * m.type.scale));
     const glow = this.makeGlowSprite(tint, 1.3, 0.35);
     glow.position.y = 0.6;
     group.add(glow);
+    this.addTypeAura(m, group);
     this.scene.add(group);
 
     const mixer = new THREE.AnimationMixer(inst);
@@ -528,6 +536,46 @@ const World = {
     m.currentAction = idle;
     m.built = true;
     m.group.visible = m.alive;
+    m.hoverPhase = Math.random() * 10;
+  },
+
+  buildShadeVisual(m) {
+    const group = new THREE.Group();
+    const bodyMat = new THREE.MeshStandardMaterial({
+      color: 0x241633, emissive: m.type.tint, emissiveIntensity: 0.55, roughness: 0.55,
+      transparent: true, opacity: 0.9,
+    });
+    const body = new THREE.Mesh(new THREE.IcosahedronGeometry(0.5, 1), bodyMat);
+    body.scale.set(1, 0.75, 1);
+    body.castShadow = true;
+    group.add(body);
+    const wingGeo = new THREE.PlaneGeometry(0.75, 0.42);
+    const wingMatL = new THREE.MeshBasicMaterial({ color: m.type.tint, transparent: true, opacity: 0.55, side: THREE.DoubleSide, depthWrite: false });
+    const wingL = new THREE.Mesh(wingGeo, wingMatL);
+    wingL.position.set(-0.45, 0, 0); wingL.rotation.y = 0.5;
+    const wingR = new THREE.Mesh(wingGeo, wingMatL.clone());
+    wingR.position.set(0.45, 0, 0); wingR.rotation.y = -0.5;
+    group.add(wingL, wingR);
+    m.wings = [wingL, wingR];
+    const glow = this.makeGlowSprite(m.type.tint, 1.3, 0.4);
+    glow.position.y = 0.15;
+    group.add(glow);
+    this.addTypeAura(m, group);
+    this.scene.add(group);
+    m.group = group;
+    m.built = true;
+    m.group.visible = m.alive;
+    m.hoverPhase = Math.random() * 10;
+  },
+
+  addTypeAura(m, group) {
+    if (!m.type.aura) return;
+    const ringGeo = new THREE.RingGeometry(0.55, 0.8, 20);
+    const ringMat = new THREE.MeshBasicMaterial({ color: m.type.aura, transparent: true, opacity: 0.4, side: THREE.DoubleSide, depthWrite: false, blending: THREE.AdditiveBlending });
+    const ring = new THREE.Mesh(ringGeo, ringMat);
+    ring.rotation.x = -Math.PI / 2;
+    ring.position.y = 0.06;
+    group.add(ring);
   },
 
   crossfadeTo(m, name, duration) {
@@ -553,17 +601,18 @@ const World = {
   },
 
   spawnMonsterSlot(delay) {
-    const colors = ['green', 'blue', 'purple', 'orange'];
+    const type = MONSTER_TYPES[Math.floor(Math.random() * MONSTER_TYPES.length)];
     const pos = this.randomRingPosAroundPlayer(9, 26);
     const m = {
-      pos, colorKey: colors[Math.floor(Math.random() * colors.length)],
+      pos, type, hp: type.hp, maxHp: type.hp,
       alive: false, built: false, group: null,
       spawnAt: performance.now() + (delay || 0) * 1000,
       state: 'idle', facing: 0, wanderTarget: null,
       idleUntil: 0, lastAttackTick: 0,
+      status: null, statusUntil: 0, statusLethal: false, statusStart: 0, statusDrift: null,
     };
     this.monsters.push(m);
-    if (this.foxTemplate) this.buildMonsterVisual(m);
+    if (type.model === 'shade' || this.foxTemplate) this.buildMonsterVisual(m);
   },
 
   spawnStar(delay) {
@@ -689,10 +738,11 @@ const World = {
     chargeFrac = chargeFrac || 0;
     const mega = chargeFrac > 0;
     if (this.castCooldown > performance.now()) return;
-    this.castCooldown = performance.now() + (mega ? 500 + chargeFrac * 500 : 380);
     const state = ST.get();
     const powerId = state.activePower;
     if (!(state.powerLevels[powerId] > 0)) return;
+    const level = state.powerLevels[powerId];
+    this.castCooldown = performance.now() + (mega ? 500 + chargeFrac * 500 : Math.max(280, 380 - (level - 1) * 25));
     ST.sfx.cast();
     const yaw = this.player.yaw, pitch = this.player.pitch;
     const dir = new THREE.Vector3(
@@ -708,7 +758,7 @@ const World = {
       if (d > bestDot) { bestDot = d; target = m; }
     });
     const visual = POWER_VISUALS[powerId];
-    const scale = 1 + chargeFrac * 2.4;
+    const scale = (1 + chargeFrac * 2.4) * (1 + (level - 1) * 0.06);
     const mat = new THREE.MeshBasicMaterial({ color: visual.color });
     const mesh = new THREE.Mesh(this.projGeo[powerId], mat);
     if (visual.shape === 'cone') mesh.rotation.x = Math.PI / 2;
@@ -718,7 +768,7 @@ const World = {
     mesh.position.copy(this.player.pos);
     this.scene.add(mesh);
     this.projectiles.push({
-      pos: mesh.position, dir, powerId, visual, life: mega ? 3.2 : 2.4, target, obj: mesh, trailTimer: 0,
+      pos: mesh.position, dir, powerId, visual, level, life: mega ? 3.2 : 2.4, target, obj: mesh, trailTimer: 0,
       mega, hitRadiusMul: mega ? (1.6 + chargeFrac * 1.4) : 1,
     });
   },
@@ -726,7 +776,7 @@ const World = {
   onMonsterKilled(m, visual) {
     const state = ST.get();
     state.kills += 1;
-    const reward = 3 + Math.floor(Math.random() * 2);
+    const reward = 3 + Math.floor(Math.random() * 2) + (m.maxHp - 1);
     state.stars += reward;
     state.starsEarnedTotal += reward;
     ST.save();
@@ -740,6 +790,10 @@ const World = {
     m.alive = false;
     if (m.group) m.group.visible = false;
     m.state = 'idle';
+    m.status = null;
+    if (m.statusSprite) m.statusSprite.visible = false;
+    if (m.group) m.group.scale.setScalar(1);
+    m.hp = m.maxHp;
     m.spawnAt = performance.now() + 3000 + Math.random() * 2200;
     m.pos = this.randomRingPosAroundPlayer(9, 26);
   },
@@ -761,17 +815,93 @@ const World = {
 
   onCrystalCollected(entry, now) {
     entry.cooldownUntil = now + 20000;
+    this.damageBoostUntil = now + 8000;
+    if (window.G.ui.updateBoost) window.G.ui.updateBoost(true);
     const state = ST.get();
     const reward = 2 + Math.floor(Math.random() * 3);
     state.stars += reward;
     state.starsEarnedTotal += reward;
     ST.save();
     ST.sfx.pickup();
-    window.G.ui.toast(`💎 +${reward} ⭐`);
+    window.G.ui.toast(`💎 +${reward} ⭐ Kraft-Boost aktiv! (8s doppelter Schaden)`);
     window.G.ui.updateHud();
     this.spawnKillBurst(entry.pos, { burst: CRYSTAL_BURST });
     const newAch = ST.checkAchievements();
     if (newAch.length) window.G.ui.queueAchievements(newAch);
+  },
+
+  typeMultiplier(type, powerId) {
+    if (type.weak === powerId) return 2;
+    if (type.resist === powerId) return 0.5;
+    return 1;
+  },
+
+  applyStatus(m, powerId, lethal, duration) {
+    if (!m.group) { if (lethal) this.onMonsterKilled(m, POWER_VISUALS[powerId]); return; }
+    m.status = powerId;
+    m.statusStart = performance.now();
+    m.statusUntil = m.statusStart + duration * 1000;
+    m.statusLethal = lethal;
+    if (!m.statusSprite) {
+      m.statusSprite = this.makeGlowSprite(0xffffff, 1.4, 0.85);
+      m.statusSprite.position.y = 1.0;
+      m.group.add(m.statusSprite);
+    }
+    const visual = POWER_VISUALS[powerId];
+    m.statusSprite.material.color.set(visual.glow);
+    m.statusSprite.visible = true;
+  },
+
+  hitMonster(m, pr) {
+    const state = ST.get();
+    const level = pr.level || state.powerLevels[pr.powerId] || 1;
+    let dmg = (1 + Math.floor((level - 1) / 2)) * (pr.mega ? 2 : 1);
+    dmg *= this.typeMultiplier(m.type, pr.powerId);
+    if (performance.now() < this.damageBoostUntil) dmg *= 2;
+    dmg = Math.max(1, Math.round(dmg));
+    m.hp -= dmg;
+    const lethal = m.hp <= 0;
+    let duration = Math.max(0.7, 2.0 - (level - 1) * 0.32) * (pr.mega ? 0.6 : 1);
+    if (!lethal) duration = 0.45;
+    if (pr.powerId === 'flug') m.statusDrift = { x: (Math.random() - 0.5) * 3, z: (Math.random() - 0.5) * 3 };
+    this.applyStatus(m, pr.powerId, lethal, duration);
+    ST.sfx.hit();
+    if (m.type.weak === pr.powerId) window.G.ui.toast('💥 Schwachpunkt getroffen!');
+  },
+
+  updateMonsterStatus(m, dt, now) {
+    const elapsed = (now - m.statusStart) / 1000;
+    if (m.status === 'eis') {
+      m.statusSprite.scale.setScalar(1.2 + Math.sin(now * 0.01) * 0.1);
+    } else if (m.status === 'feuer') {
+      m.statusSprite.scale.setScalar(1.0 + Math.sin(now * 0.02) * 0.3);
+      m._fireTick = (m._fireTick || 0) - dt;
+      if (m._fireTick <= 0) {
+        m._fireTick = 0.12;
+        this.spawnTrailParticle(this._v1.copy(m.pos).add(this._v2.set(0, 0.8, 0)), 0xff8c42);
+      }
+    } else if (m.status === 'flug') {
+      m.pos.y += dt * 2.2;
+      if (m.statusDrift) { m.pos.x += m.statusDrift.x * dt; m.pos.z += m.statusDrift.z * dt; }
+      m.facing += dt * 8;
+    } else if (m.status === 'blitz') {
+      m.group.position.x = m.pos.x + (Math.random() - 0.5) * 0.12;
+      m.group.position.z = m.pos.z + (Math.random() - 0.5) * 0.12;
+    } else if (m.status === 'kraft') {
+      const s = Math.max(0.3, 1 - elapsed * 0.5);
+      m.group.scale.set(1.15, s, 1.15);
+    } else if (m.status === 'schild') {
+      m.facing += dt * 10;
+    }
+    if (now >= m.statusUntil) {
+      if (m.statusLethal) {
+        this.onMonsterKilled(m, POWER_VISUALS[m.status]);
+      } else {
+        m.status = null;
+        if (m.statusSprite) m.statusSprite.visible = false;
+        m.group.scale.setScalar(1);
+      }
+    }
   },
 
   spawnTrailParticle(pos, color) {
@@ -818,6 +948,11 @@ const World = {
 
   updateMonsterAI(m, dt, now) {
     if (!m.alive) return;
+    if (m.status) {
+      this.updateMonsterStatus(m, dt, now);
+      if (m.group && m.alive) { m.group.position.copy(m.pos); m.group.rotation.y = m.facing; }
+      return;
+    }
     const toPlayer = this._v1.copy(this.player.pos).sub(m.pos);
     toPlayer.y = 0;
     const dist = toPlayer.length();
@@ -868,13 +1003,17 @@ const World = {
       }
     }
 
-    m.pos.y = this.heightAt(m.pos.x, m.pos.z);
+    const hover = m.type.model === 'shade' ? 1.3 + Math.sin(now * 0.003 + m.hoverPhase) * 0.2 : 0;
+    m.pos.y = this.heightAt(m.pos.x, m.pos.z) + hover;
 
     if (m.built) {
-      this.crossfadeTo(m, animName, 0.35);
+      if (m.mixer) { this.crossfadeTo(m, animName, 0.35); m.mixer.update(dt); }
+      if (m.wings) {
+        const f = Math.sin(now * 0.012 + m.hoverPhase) * 0.4;
+        m.wings[0].rotation.z = f; m.wings[1].rotation.z = -f;
+      }
       m.group.position.copy(m.pos);
       m.group.rotation.y = m.facing;
-      m.mixer.update(dt);
     }
   },
 
@@ -1005,7 +1144,7 @@ const World = {
       let hit = false;
       const hitR = (pr.visual.hitRadius || 2.0) * pr.hitRadiusMul;
       this.monsters.forEach(m => {
-        if (m.alive && m.pos.distanceTo(pr.pos) < hitR && (pr.mega || !hit)) { this.onMonsterKilled(m, pr.visual); hit = true; }
+        if (m.alive && !m.status && m.pos.distanceTo(pr.pos) < hitR && (pr.mega || !hit)) { this.hitMonster(m, pr); hit = true; }
       });
       if (hit && pr.mega) { this.shakeTime = 0.3; this.shakeMag = Math.max(this.shakeMag || 0, 0.22); }
       if (hit || pr.life <= 0) { this.scene.remove(pr.obj); this.projectiles.splice(i, 1); }
