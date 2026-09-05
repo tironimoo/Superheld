@@ -43,6 +43,8 @@
     { id: 'all_maxed', emoji: '💎', name: 'Vollkommen', desc: 'Alle Kräfte auf Stufe 5', check: s => POWERS.every(p => (s.powerLevels[p.id] || 0) >= MAX_LEVEL) },
     { id: 'ueberheld', emoji: '👑', name: 'ÜBERHELD', desc: 'Den höchsten Rang erreicht', check: s => totalPoints(s) >= RANKS[RANKS.length - 1].min },
     { id: 'rich', emoji: '💰', name: 'Sternensammler', desc: '150 Sterne gesammelt', check: s => s.starsEarnedTotal >= 150 },
+    { id: 'treasure_1', emoji: '🏆', name: 'Schatzsucher', desc: 'Den ersten bewachten Schatz gehoben', check: s => (s.treasuresFound || 0) >= 1 },
+    { id: 'treasure_5', emoji: '👑', name: 'Schatzmeister', desc: '5 bewachte Schätze gehoben', check: s => (s.treasuresFound || 0) >= 5 },
   ];
 
   function defaultState() {
@@ -60,6 +62,9 @@
       activePower: 'feuer',
       achievements: [],
       soundOn: true,
+      questSeed: Math.floor(Math.random() * 1e9),
+      questLevel: 1,
+      treasuresFound: 0,
     };
   }
 

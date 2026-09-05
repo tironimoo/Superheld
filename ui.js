@@ -109,6 +109,26 @@
     $('#btn-cast').classList.toggle('charging', frac > 0.05);
   }
 
+  /* ---------- Quest compass ---------- */
+  function updateCompass(angleDeg, distance) {
+    const arrow = $('#compass-arrow');
+    if (arrow) arrow.style.transform = `rotate(${angleDeg}deg)`;
+    const dist = $('#compass-dist');
+    if (dist) dist.textContent = distance < 15 ? '🏆 Ganz nah!' : Math.round(distance) + 'm';
+  }
+
+  function showTreasureFound() {
+    ST.sfx.levelup();
+    launchConfetti(200);
+    const html = `
+      <div class="overlay-emoji">🏆</div>
+      <h2>Schatz gehoben!</h2>
+      <p>Ein neuer, noch besser bewachter Schatz wartet schon irgendwo in der Welt auf dich – der Kompass zeigt dir den Weg!</p>
+      <button class="btn btn-primary btn-big overlay-close">Weiter auf Schatzsuche!</button>
+    `;
+    showOverlay(html);
+  }
+
   /* ---------- Crystal damage boost indicator ---------- */
   let boostTimer = null;
   function updateBoost(active) {
@@ -399,6 +419,6 @@
     }
   }
 
-  window.G.ui = { toast, queueAchievements, updateHud, updateHealth, updateCharge, updateBoost };
+  window.G.ui = { toast, queueAchievements, updateHud, updateHealth, updateCharge, updateBoost, updateCompass, showTreasureFound };
   document.addEventListener('DOMContentLoaded', init);
 })();

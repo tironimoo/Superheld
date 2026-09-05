@@ -3,6 +3,10 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
 import { clone as cloneSkeleton } from 'three/addons/utils/SkeletonUtils.js';
 import { ImprovedNoise } from 'three/addons/math/ImprovedNoise.js';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 
 const ST = window.G.state;
 
@@ -30,13 +34,19 @@ function chunkHash(cx, cz) {
 }
 
 // Enemy species: each has its own toughness and an elemental weakness/resistance,
-// so picking the right power against the right monster actually matters.
+// so picking the right power against the right monster actually matters. Every
+// power is somebody's weakness and somebody else's resistance, so the six
+// powers all stay useful across the roster. "attachment" adds a small extra
+// bit of geometry in buildMonsterVisual/buildShadeVisual for a distinct silhouette.
 const MONSTER_TYPES = [
-  { id: 'wicht', name: 'Wicht', tint: 0x57d68d, hp: 2, weak: null, resist: null, model: 'fox', scale: 1, aura: null },
-  { id: 'flammling', name: 'Flammling', tint: 0xff7043, hp: 2, weak: 'eis', resist: 'feuer', model: 'fox', scale: 1, aura: 0xff6b35 },
-  { id: 'frostling', name: 'Frostling', tint: 0x4fc3f7, hp: 2, weak: 'feuer', resist: 'eis', model: 'fox', scale: 1, aura: 0x8fdcff },
-  { id: 'steinling', name: 'Steinling', tint: 0x8d6e63, hp: 3, weak: 'kraft', resist: 'blitz', model: 'fox', scale: 1.3, aura: 0xa1887f },
-  { id: 'schatten', name: 'Schattenschwinge', tint: 0xb085f5, hp: 2, weak: 'flug', resist: 'kraft', model: 'shade', scale: 1, aura: 0x7e57c2 },
+  { id: 'wicht', name: 'Wicht', tint: 0x57d68d, hp: 2, weak: null, resist: null, model: 'fox', scale: 1, aura: null, attachment: null },
+  { id: 'flammling', name: 'Flammling', tint: 0xff7043, hp: 2, weak: 'eis', resist: 'feuer', model: 'fox', scale: 1, aura: 0xff6b35, attachment: 'flame' },
+  { id: 'frostling', name: 'Frostling', tint: 0x4fc3f7, hp: 2, weak: 'feuer', resist: 'eis', model: 'fox', scale: 1, aura: 0x8fdcff, attachment: 'spike' },
+  { id: 'steinling', name: 'Steinling', tint: 0x8d6e63, hp: 3, weak: 'kraft', resist: 'blitz', model: 'fox', scale: 1.3, aura: 0xa1887f, attachment: 'rock' },
+  { id: 'funkling', name: 'Funkling', tint: 0xfdd835, hp: 2, weak: 'schild', resist: 'flug', model: 'fox', scale: 0.9, aura: 0xfff2a8, attachment: 'spark' },
+  { id: 'riesenwicht', name: 'Riesenwicht', tint: 0x6d8f6a, hp: 4, weak: null, resist: null, model: 'fox', scale: 1.6, aura: null, attachment: 'horns' },
+  { id: 'schatten', name: 'Schattenschwinge', tint: 0xb085f5, hp: 2, weak: 'flug', resist: 'kraft', model: 'shade', scale: 1, aura: 0x7e57c2, attachment: null },
+  { id: 'traumgeist', name: 'Traumgeist', tint: 0x5c4fd6, hp: 3, weak: 'blitz', resist: 'schild', model: 'shade', scale: 1.25, aura: 0x8a7cff, attachment: 'eyes' },
 ];
 const MAX_HEALTH = 5;
 
@@ -87,7 +97,33 @@ const POWER_VISUALS = {
   },
 };
 
+// First-person cast animations: how the viewmodel hands move for each power.
+// hands: 'both' | 'right' | 'spread'. pos/rot are the peak offset from the
+// resting pose, reached mid-swing and eased back out — a different silhouette
+// of motion per power (throw, punch, jab, spread-summon, upward sweep).
+const HAND_ANIMS = {
+  feuer: { hands: 'both', duration: 380, pos: [0, 0.3, 0.28], rot: [0.4, 0, 0] },
+  eis: { hands: 'spread', duration: 380, pos: [0.16, 0.24, 0.18], rot: [0.2, 0, 0.35] },
+  blitz: { hands: 'right', duration: 260, pos: [0.1, 0.32, 0.22], rot: [0.6, 0, 0] },
+  kraft: { hands: 'both', duration: 420, pos: [0, 0.22, 0.25], rot: [0.7, 0, 0] },
+  schild: { hands: 'spread', duration: 420, pos: [0.18, 0.3, 0.12], rot: [-0.3, 0, 0.5] },
+  flug: { hands: 'both', duration: 400, pos: [0, 0.48, 0.12], rot: [-0.7, 0, 0] },
+};
+
 const CRYSTAL_BURST = { count: 10, speed: [2, 4], colors: [0x9d7bff, 0xffffff, 0xb385ff], gravity: 2, spreadUp: 0.5 };
+const TREASURE_BURST = { count: 26, speed: [3, 7], colors: [0xffd76a, 0xffb02e, 0xffffff, 0xff6b35], gravity: 5, spreadUp: 0.7 };
+const GUARD_TYPE_IDS = ['riesenwicht', 'steinling', 'traumgeist', 'schatten'];
+
+// Deterministic-but-persistent treasure location: derived from a per-hero
+// random seed (stored in the save) and the current quest level, so it's
+// stable across reloads and moves farther out (with tougher guards) each
+// time a treasure is claimed.
+function questTargetFor(seed, level) {
+  const rand = mulberry32((seed + level * 7919) >>> 0);
+  const angle = rand() * Math.PI * 2;
+  const dist = 55 + level * 40;
+  return { x: Math.cos(angle) * dist, z: Math.sin(angle) * dist };
+}
 
 const World = {
   canvas: null, scene: null, camera: null, renderer: null,
@@ -131,6 +167,17 @@ const World = {
     if (THREE.SRGBColorSpace) renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer = renderer;
 
+    const w = canvas.clientWidth || 1, h = canvas.clientHeight || 1;
+    const composer = new EffectComposer(renderer);
+    composer.addPass(new RenderPass(scene, camera));
+    // Bloom runs at half resolution — a big perf win on weaker/mobile GPUs
+    // since the glow is a soft blur anyway and loses little visible detail.
+    const bloom = new UnrealBloomPass(new THREE.Vector2(w / 2, h / 2), 0.45, 0.55, 0.74);
+    composer.addPass(bloom);
+    composer.addPass(new OutputPass());
+    this.composer = composer;
+    this.bloom = bloom;
+
     this.buildSky();
     this.buildLights();
     this.buildTerrainMaterial();
@@ -141,13 +188,104 @@ const World = {
     this.loadTreeModel();
     this.loadFoxModel();
 
+    this.buildHands();
+
     this.updateChunks(true);
-    for (let i = 0; i < 6; i++) this.spawnMonsterSlot(1 + i * 0.4);
+    for (let i = 0; i < 8; i++) this.spawnMonsterSlot(1 + i * 0.35);
     for (let i = 0; i < 6; i++) this.spawnStar(0);
+    this.setupQuest();
 
     this.setupInput();
     this.resize();
     return true;
+  },
+
+  /* ---------------- quest: an escalating treasure hunt with a compass ---------------- */
+
+  setupQuest() {
+    const state = ST.get();
+    const t = questTargetFor(state.questSeed, state.questLevel);
+    const y = this.heightAt(t.x, t.z);
+    this.quest = { targetPos: new THREE.Vector3(t.x, y, t.z), level: state.questLevel, claimed: false, guards: [] };
+    this.buildTreasure();
+    this.spawnGuards();
+  },
+
+  buildTreasure() {
+    if (this.treasureGroup) { this.scene.remove(this.treasureGroup); this.treasureGroup = null; }
+    const group = new THREE.Group();
+    const baseMat = new THREE.MeshStandardMaterial({ color: 0x6b4a2f, roughness: 0.7, metalness: 0.2 });
+    const goldMat = new THREE.MeshStandardMaterial({ color: 0xffd76a, emissive: 0xffb02e, emissiveIntensity: 0.5, roughness: 0.3, metalness: 0.6 });
+    const base = new THREE.Mesh(new THREE.BoxGeometry(1.1, 0.7, 0.8), baseMat);
+    base.position.y = 0.35; base.castShadow = true; base.receiveShadow = true;
+    const lid = new THREE.Mesh(new THREE.CylinderGeometry(0.55, 0.55, 0.8, 10, 1, false, 0, Math.PI), goldMat);
+    lid.rotation.z = Math.PI / 2;
+    lid.scale.set(1, 0.85, 1);
+    lid.position.y = 0.72;
+    lid.castShadow = true;
+    group.add(base, lid);
+    const glow = this.makeGlowSprite(0xffd76a, 3, 0.6);
+    glow.position.y = 1.2;
+    group.add(glow);
+    const light = new THREE.PointLight(0xffd76a, 2, 14, 2);
+    light.position.y = 1.0;
+    group.add(light);
+    const ringGeo = new THREE.RingGeometry(1.3, 1.7, 32);
+    const ringMat = new THREE.MeshBasicMaterial({ color: 0xffd76a, transparent: true, opacity: 0.4, side: THREE.DoubleSide, depthWrite: false, blending: THREE.AdditiveBlending });
+    const ring = new THREE.Mesh(ringGeo, ringMat);
+    ring.rotation.x = -Math.PI / 2;
+    ring.position.y = 0.05;
+    group.add(ring);
+    group.position.copy(this.quest.targetPos);
+    this.scene.add(group);
+    this.treasureGroup = group;
+    this.treasureRing = ring;
+  },
+
+  spawnGuards() {
+    const level = this.quest.level;
+    const guardTypes = MONSTER_TYPES.filter(t => GUARD_TYPE_IDS.includes(t.id));
+    const count = Math.min(3 + level, 8);
+    for (let i = 0; i < count; i++) {
+      const type = guardTypes[i % guardTypes.length];
+      const m = this.spawnMonsterSlot(i * 0.3, { type, anchor: this.quest.targetPos });
+      const bonus = Math.floor((level - 1) / 2);
+      m.hp += bonus; m.maxHp = m.hp;
+      this.quest.guards.push(m);
+    }
+  },
+
+  claimTreasure() {
+    this.quest.claimed = true;
+    const state = ST.get();
+    const reward = 20 + this.quest.level * 10;
+    state.stars += reward;
+    state.starsEarnedTotal += reward;
+    state.treasuresFound = (state.treasuresFound || 0) + 1;
+    state.questLevel += 1;
+    ST.save();
+    ST.sfx.success();
+    window.G.ui.toast(`🏆 Schatz gehoben! +${reward} ⭐`);
+    if (window.G.ui.showTreasureFound) window.G.ui.showTreasureFound();
+    window.G.ui.updateHud();
+    const newAch = ST.checkAchievements();
+    if (newAch.length) window.G.ui.queueAchievements(newAch);
+    this.spawnKillBurst(this.quest.targetPos, { burst: TREASURE_BURST });
+    this.quest.guards.forEach(g => { g.alive = false; if (g.group) g.group.visible = false; });
+    this.quest.guards = [];
+    if (this.treasureGroup) { this.scene.remove(this.treasureGroup); this.treasureGroup = null; }
+    this.quest.targetPos = null;
+    setTimeout(() => this.setupQuest(), 3000);
+  },
+
+  computeCompass(target) {
+    const p = this.player;
+    const dx = target.x - p.pos.x, dz = target.z - p.pos.z;
+    const fx = -Math.sin(p.yaw), fz = -Math.cos(p.yaw);
+    const cross = fx * dz - fz * dx;
+    const dot = fx * dx + fz * dz;
+    const angle = Math.atan2(cross, dot);
+    return { angleDeg: angle * 180 / Math.PI, dist: Math.hypot(dx, dz) };
   },
 
   /* ---------------- terrain: layered noise, infinite rolling hills, veins of rivers/lakes ---------------- */
@@ -351,6 +489,69 @@ const World = {
     this.scene.add(this.chargeOrb);
   },
 
+  /* ---------------- first-person hands + per-power cast animation ---------------- */
+
+  buildHands() {
+    const state = ST.get();
+    const skin = ST.SKINS.find(s => s.id === state.skin) || ST.SKINS[0];
+    const skinMat = new THREE.MeshStandardMaterial({ color: new THREE.Color(skin.color), roughness: 0.55 });
+    const sleeveMat = new THREE.MeshStandardMaterial({ color: 0x3a2a6e, roughness: 0.7 });
+    const buildHand = (sign) => {
+      const g = new THREE.Group();
+      const sleeve = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.115, 0.34, 8), sleeveMat);
+      sleeve.position.set(0, -0.06, 0.2);
+      sleeve.rotation.x = Math.PI * 0.42;
+      const fist = new THREE.Mesh(new THREE.SphereGeometry(0.09, 10, 8), skinMat);
+      fist.position.set(0, 0.02, 0.02);
+      sleeve.castShadow = false; fist.castShadow = false;
+      g.add(sleeve, fist);
+      g.position.set(sign * 0.26, -0.32, -0.55);
+      g.rotation.z = sign * 0.25;
+      return g;
+    };
+    this.handL = buildHand(-1);
+    this.handR = buildHand(1);
+    const handsGroup = new THREE.Group();
+    handsGroup.add(this.handL, this.handR);
+    handsGroup.renderOrder = 999;
+    this.camera.add(handsGroup);
+    this.scene.add(this.camera);
+    this.handsGroup = handsGroup;
+  },
+
+  setHandPose(hand, sign, swing, anim, mirrorX) {
+    const baseX = sign * 0.26, baseY = -0.32, baseZ = -0.55;
+    const mx = mirrorX === undefined ? 1 : mirrorX;
+    const ox = anim ? anim.pos[0] * mx * swing : 0;
+    const oy = anim ? anim.pos[1] * swing : 0;
+    const oz = anim ? anim.pos[2] * swing : 0;
+    hand.position.set(baseX + ox, baseY + oy, baseZ + oz);
+    hand.rotation.set(anim ? anim.rot[0] * swing : 0, anim ? anim.rot[1] * swing : 0, sign * 0.25 + (anim ? anim.rot[2] * mx * swing : 0));
+  },
+
+  updateHandAnim(now) {
+    if (!this.handAnim) return;
+    const anim = HAND_ANIMS[this.handAnim.powerId] || HAND_ANIMS.feuer;
+    const t = (now - this.handAnim.start) / anim.duration;
+    if (t >= 1) {
+      this.handAnim = null;
+      this.setHandPose(this.handL, -1, 0);
+      this.setHandPose(this.handR, 1, 0);
+      return;
+    }
+    const swing = Math.sin(Math.min(Math.max(t, 0), 1) * Math.PI);
+    if (anim.hands === 'right') {
+      this.setHandPose(this.handL, -1, 0);
+      this.setHandPose(this.handR, 1, swing, anim);
+    } else if (anim.hands === 'spread') {
+      this.setHandPose(this.handL, -1, swing, anim, -1);
+      this.setHandPose(this.handR, 1, swing, anim, 1);
+    } else {
+      this.setHandPose(this.handL, -1, swing, anim);
+      this.setHandPose(this.handR, 1, swing, anim);
+    }
+  },
+
   /* ---------------- decor: trees, bushes, rocks, interactive crystals ---------------- */
 
   buildDecorTemplates() {
@@ -521,6 +722,7 @@ const World = {
     glow.position.y = 0.6;
     group.add(glow);
     this.addTypeAura(m, group);
+    this.addTypeAttachment(m, group);
     this.scene.add(group);
 
     const mixer = new THREE.AnimationMixer(inst);
@@ -561,6 +763,7 @@ const World = {
     glow.position.y = 0.15;
     group.add(glow);
     this.addTypeAura(m, group);
+    this.addTypeAttachment(m, group);
     this.scene.add(group);
     m.group = group;
     m.built = true;
@@ -578,6 +781,56 @@ const World = {
     group.add(ring);
   },
 
+  addTypeAttachment(m, group) {
+    const kind = m.type.attachment;
+    if (!kind) return;
+    const s = m.type.scale;
+    if (kind === 'flame') {
+      const flame = this.makeGlowSprite(0xff8c42, 0.7 * s, 0.8);
+      flame.position.set(0, 1.05 * s, 0);
+      group.add(flame);
+      m.attachSprite = flame;
+    } else if (kind === 'spike') {
+      const mat = new THREE.MeshStandardMaterial({ color: 0xdcf6ff, emissive: 0x4fc3f7, emissiveIntensity: 0.4, roughness: 0.2 });
+      const spike = new THREE.Mesh(new THREE.OctahedronGeometry(0.22 * s, 0), mat);
+      spike.scale.set(0.6, 1.6, 0.6);
+      spike.position.set(0, 0.85 * s, -0.15 * s);
+      spike.castShadow = true;
+      group.add(spike);
+    } else if (kind === 'rock') {
+      const mat = new THREE.MeshStandardMaterial({ color: 0x5c5470, roughness: 0.9 });
+      [[-0.18, 1], [0.18, -1]].forEach(([off, r]) => {
+        const rock = new THREE.Mesh(new THREE.DodecahedronGeometry(0.16 * s, 0), mat);
+        rock.position.set(off * s, 0.95 * s, 0);
+        rock.rotation.set(r, r * 0.5, 0);
+        rock.castShadow = true;
+        group.add(rock);
+      });
+    } else if (kind === 'spark') {
+      const spark = this.makeGlowSprite(0xfff2a8, 0.35, 0.9);
+      group.add(spark);
+      m.attachSprite = spark;
+    } else if (kind === 'horns') {
+      const mat = new THREE.MeshStandardMaterial({ color: 0x3d2b1f, roughness: 0.8 });
+      [[-0.16, -0.3], [0.16, 0.3]].forEach(([x, rz]) => {
+        const horn = new THREE.Mesh(new THREE.ConeGeometry(0.08 * s, 0.34 * s, 6), mat);
+        horn.position.set(x * s, 1.25 * s, 0.05 * s);
+        horn.rotation.z = rz;
+        horn.castShadow = true;
+        group.add(horn);
+      });
+    } else if (kind === 'eyes') {
+      const mat = new THREE.MeshBasicMaterial({ color: 0xffe082 });
+      m.eyeMeshes = [];
+      [-0.16, 0.16].forEach(x => {
+        const eye = new THREE.Mesh(new THREE.SphereGeometry(0.06 * s, 6, 6), mat);
+        eye.position.set(x * s, 0.1 * s, 0.4 * s);
+        group.add(eye);
+        m.eyeMeshes.push(eye);
+      });
+    }
+  },
+
   crossfadeTo(m, name, duration) {
     const next = m.actions[name];
     if (!next || next === m.currentAction) return;
@@ -588,23 +841,29 @@ const World = {
 
   /* ---------------- spawning (always relative to the player, since the world is endless) ---------------- */
 
-  randomRingPosAroundPlayer(minR, maxR) {
+  randomRingPosAround(center, minR, maxR) {
     for (let tries = 0; tries < 12; tries++) {
       const a = Math.random() * Math.PI * 2;
       const d = minR + Math.random() * (maxR - minR);
-      const x = this.player.pos.x + Math.cos(a) * d, z = this.player.pos.z + Math.sin(a) * d;
+      const x = center.x + Math.cos(a) * d, z = center.z + Math.sin(a) * d;
       const h = this.heightAt(x, z);
       if (h > WATER_LEVEL + 0.3) return new THREE.Vector3(x, h, z);
     }
-    const x = this.player.pos.x + minR, z = this.player.pos.z;
+    const x = center.x + minR, z = center.z;
     return new THREE.Vector3(x, this.heightAt(x, z), z);
   },
 
-  spawnMonsterSlot(delay) {
-    const type = MONSTER_TYPES[Math.floor(Math.random() * MONSTER_TYPES.length)];
-    const pos = this.randomRingPosAroundPlayer(9, 26);
+  randomRingPosAroundPlayer(minR, maxR) {
+    return this.randomRingPosAround(this.player.pos, minR, maxR);
+  },
+
+  spawnMonsterSlot(delay, opts) {
+    opts = opts || {};
+    const type = opts.type || MONSTER_TYPES[Math.floor(Math.random() * MONSTER_TYPES.length)];
+    const anchor = opts.anchor || null;
+    const pos = anchor ? this.randomRingPosAround(anchor, 3, 9) : this.randomRingPosAroundPlayer(9, 26);
     const m = {
-      pos, type, hp: type.hp, maxHp: type.hp,
+      pos, type, anchor, hp: type.hp, maxHp: type.hp,
       alive: false, built: false, group: null,
       spawnAt: performance.now() + (delay || 0) * 1000,
       state: 'idle', facing: 0, wanderTarget: null,
@@ -613,6 +872,7 @@ const World = {
     };
     this.monsters.push(m);
     if (type.model === 'shade' || this.foxTemplate) this.buildMonsterVisual(m);
+    return m;
   },
 
   spawnStar(delay) {
@@ -730,6 +990,11 @@ const World = {
     this.renderer.setSize(this.canvas.clientWidth, this.canvas.clientHeight, false);
     this.camera.aspect = this.canvas.clientWidth / this.canvas.clientHeight;
     this.camera.updateProjectionMatrix();
+    if (this.composer) {
+      this.composer.setPixelRatio(dpr);
+      this.composer.setSize(this.canvas.clientWidth, this.canvas.clientHeight);
+    }
+    if (this.bloom) this.bloom.resolution.set(this.canvas.clientWidth / 2, this.canvas.clientHeight / 2);
   },
 
   /* ---------------- combat ---------------- */
@@ -744,6 +1009,7 @@ const World = {
     const level = state.powerLevels[powerId];
     this.castCooldown = performance.now() + (mega ? 500 + chargeFrac * 500 : Math.max(280, 380 - (level - 1) * 25));
     ST.sfx.cast();
+    this.handAnim = { powerId, start: performance.now() };
     const yaw = this.player.yaw, pitch = this.player.pitch;
     const dir = new THREE.Vector3(
       -Math.sin(yaw) * Math.cos(pitch),
@@ -795,7 +1061,7 @@ const World = {
     if (m.group) m.group.scale.setScalar(1);
     m.hp = m.maxHp;
     m.spawnAt = performance.now() + 3000 + Math.random() * 2200;
-    m.pos = this.randomRingPosAroundPlayer(9, 26);
+    m.pos = m.anchor ? this.randomRingPosAround(m.anchor, 3, 9) : this.randomRingPosAroundPlayer(9, 26);
   },
 
   onStarCollected(s) {
@@ -953,6 +1219,14 @@ const World = {
       if (m.group && m.alive) { m.group.position.copy(m.pos); m.group.rotation.y = m.facing; }
       return;
     }
+    const anchorPos = m.anchor || this.player.pos;
+    const leash = m.anchor ? 16 : 38;
+    if (m.pos.distanceTo(anchorPos) > leash) {
+      m.pos.copy(this.randomRingPosAround(anchorPos, m.anchor ? 3 : 9, m.anchor ? 9 : 26));
+      m.wanderTarget = null;
+      m.idleUntil = 0;
+    }
+
     const toPlayer = this._v1.copy(this.player.pos).sub(m.pos);
     toPlayer.y = 0;
     const dist = toPlayer.length();
@@ -1012,8 +1286,24 @@ const World = {
         const f = Math.sin(now * 0.012 + m.hoverPhase) * 0.4;
         m.wings[0].rotation.z = f; m.wings[1].rotation.z = -f;
       }
+      this.animateAttachment(m, now);
       m.group.position.copy(m.pos);
       m.group.rotation.y = m.facing;
+    }
+  },
+
+  animateAttachment(m, now) {
+    if (m.attachSprite) {
+      if (m.type.attachment === 'spark') {
+        const a = now * 0.006 + m.hoverPhase;
+        m.attachSprite.position.set(Math.cos(a) * 0.5 * m.type.scale, 0.9 * m.type.scale + Math.sin(a * 2) * 0.1, Math.sin(a) * 0.5 * m.type.scale);
+      } else {
+        m.attachSprite.scale.setScalar(0.7 * m.type.scale * (1 + Math.sin(now * 0.02 + m.hoverPhase) * 0.25));
+      }
+    }
+    if (m.eyeMeshes) {
+      const b = 0.1 * m.type.scale + Math.sin(now * 0.004 + m.hoverPhase) * 0.03 * m.type.scale;
+      m.eyeMeshes.forEach(e => { e.position.y = b; });
     }
   },
 
@@ -1120,6 +1410,15 @@ const World = {
       if (p.pos.distanceTo(entry.pos) < 1.9) this.onCrystalCollected(entry, now);
     });
 
+    if (this.quest && this.quest.targetPos && !this.quest.claimed) {
+      if (this.treasureGroup) this.treasureGroup.rotation.y += dt * 0.6;
+      const c = this.computeCompass(this.quest.targetPos);
+      if (window.G.ui.updateCompass) window.G.ui.updateCompass(c.angleDeg, c.dist);
+      if (c.dist < 2.5) this.claimTreasure();
+    }
+
+    this.updateHandAnim(now);
+
     for (let i = this.projectiles.length - 1; i >= 0; i--) {
       const pr = this.projectiles[i];
       if (pr.target && pr.target.alive) {
@@ -1163,7 +1462,8 @@ const World = {
   },
 
   render() {
-    this.renderer.render(this.scene, this.camera);
+    if (this.composer) this.composer.render();
+    else this.renderer.render(this.scene, this.camera);
   },
 
   loop() {

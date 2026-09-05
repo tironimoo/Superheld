@@ -1,4 +1,4 @@
-const CACHE_NAME = 'ueberheld-cache-v7';
+const CACHE_NAME = 'ueberheld-cache-v8';
 const ASSETS = [
   './',
   './index.html',
@@ -18,6 +18,16 @@ const ASSETS = [
   './vendor/three/examples/jsm/utils/BufferGeometryUtils.js',
   './vendor/three/examples/jsm/utils/SkeletonUtils.js',
   './vendor/three/examples/jsm/math/ImprovedNoise.js',
+  './vendor/three/examples/jsm/postprocessing/EffectComposer.js',
+  './vendor/three/examples/jsm/postprocessing/Pass.js',
+  './vendor/three/examples/jsm/postprocessing/RenderPass.js',
+  './vendor/three/examples/jsm/postprocessing/ShaderPass.js',
+  './vendor/three/examples/jsm/postprocessing/MaskPass.js',
+  './vendor/three/examples/jsm/postprocessing/UnrealBloomPass.js',
+  './vendor/three/examples/jsm/postprocessing/OutputPass.js',
+  './vendor/three/examples/jsm/shaders/CopyShader.js',
+  './vendor/three/examples/jsm/shaders/LuminosityHighPassShader.js',
+  './vendor/three/examples/jsm/shaders/OutputShader.js',
 ];
 
 self.addEventListener('install', event => {
