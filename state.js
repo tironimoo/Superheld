@@ -13,12 +13,12 @@
   ];
 
   const POWERS = [
-    { id: 'feuer', name: 'Feuerkraft', emoji: '🔥', color: '#ff6b35', color2: '#ffb347', desc: 'Schleudere Feuerbälle!', unlockRank: 0 },
-    { id: 'eis', name: 'Eiskraft', emoji: '❄️', color: '#4fc3f7', color2: '#b3e5fc', desc: 'Friere Gegner ein!', unlockRank: 0 },
-    { id: 'blitz', name: 'Blitzkraft', emoji: '⚡', color: '#fdd835', color2: '#ab47bc', desc: 'Superschnell wie der Blitz!', unlockRank: 1 },
-    { id: 'kraft', name: 'Superkraft', emoji: '💪', color: '#8d6e63', color2: '#ffd54f', desc: 'Stark wie ein Bär!', unlockRank: 1 },
-    { id: 'schild', name: 'Regenbogenschild', emoji: '🌈', color: '#ec407a', color2: '#7e57c2', desc: 'Ein Schild aus buntem Licht!', unlockRank: 2 },
-    { id: 'flug', name: 'Flugkraft', emoji: '🦋', color: '#81d4fa', color2: '#ffffff', desc: 'Fliege hoch in den Himmel!', unlockRank: 3 },
+    { id: 'feuer', name: 'Feuerkraft', emoji: '🔥', color: '#ff6b35', color2: '#ffb347', desc: 'Lodernde Feuerbälle mit einem Funkenregen beim Einschlag!', unlockRank: 0 },
+    { id: 'eis', name: 'Eiskraft', emoji: '❄️', color: '#4fc3f7', color2: '#b3e5fc', desc: 'Gleißende Eiskristalle, die beim Treffer zu Frost zersplittern!', unlockRank: 0 },
+    { id: 'blitz', name: 'Blitzkraft', emoji: '⚡', color: '#fdd835', color2: '#ab47bc', desc: 'Ein greller Blitzpfeil – schneller als jeder andere Zauber!', unlockRank: 1 },
+    { id: 'kraft', name: 'Superkraft', emoji: '💪', color: '#8d6e63', color2: '#ffd54f', desc: 'Ein wuchtiger Kraftbrocken lässt beim Einschlag den Boden erzittern!', unlockRank: 1 },
+    { id: 'schild', name: 'Regenbogenschild', emoji: '🌈', color: '#ec407a', color2: '#7e57c2', desc: 'Ein wirbelnder Ring aus buntem Licht mit funkelnder Regenbogenspur!', unlockRank: 2 },
+    { id: 'flug', name: 'Flugkraft', emoji: '🦋', color: '#81d4fa', color2: '#ffffff', desc: 'Ein Wirbelwind aus Federn, der Gegner sanft davonpustet!', unlockRank: 3 },
   ];
 
   const MAX_LEVEL = 5;

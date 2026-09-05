@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
 import { clone as cloneSkeleton } from 'three/addons/utils/SkeletonUtils.js';
+import { ImprovedNoise } from 'three/addons/math/ImprovedNoise.js';
 
 const ST = window.G.state;
 
@@ -14,11 +15,57 @@ function mulberry32(seed) {
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
   };
 }
+function smoothstep(edge0, edge1, x) {
+  const t = Math.max(0, Math.min(1, (x - edge0) / (edge1 - edge0)));
+  return t * t * (3 - 2 * t);
+}
+function angleDiff(from, to) {
+  let d = (to - from) % (Math.PI * 2);
+  if (d > Math.PI) d -= Math.PI * 2;
+  if (d < -Math.PI) d += Math.PI * 2;
+  return d;
+}
 
 const MONSTER_TINTS = {
   green: 0x57d68d, blue: 0x4fc3f7, purple: 0xb085f5, orange: 0xffab5e,
 };
 const MAX_HEALTH = 5;
+const PLAY_RADIUS = 17;
+
+// Distinct look & feel per superpower: projectile shape/color, trail sprites
+// and an impact burst profile (particle count/speed/colors/gravity).
+const POWER_VISUALS = {
+  feuer: {
+    color: 0xff6b35, glow: 0xffb347, shape: 'sphere', size: 0.3, speed: 22,
+    trailColor: 0xff8c42, trailRate: 70,
+    burst: { count: 12, speed: [3, 6], colors: [0xff6b35, 0xffb347, 0xffd54f], gravity: 4, spreadUp: 0.6 },
+  },
+  eis: {
+    color: 0x4fc3f7, glow: 0xdcf6ff, shape: 'octahedron', size: 0.34, speed: 19,
+    trailColor: 0xbfe9ff, trailRate: 80,
+    burst: { count: 10, speed: [2, 4], colors: [0x4fc3f7, 0xb3e5fc, 0xffffff], gravity: 1.5, spreadUp: 0.3 },
+  },
+  blitz: {
+    color: 0xfdd835, glow: 0xd9a6ff, shape: 'box', size: [0.16, 0.16, 0.55], speed: 34,
+    trailColor: 0xfff2a8, trailRate: 40,
+    burst: { count: 8, speed: [5, 9], colors: [0xfdd835, 0xab47bc, 0xffffff], gravity: 2, spreadUp: 0.4 },
+  },
+  kraft: {
+    color: 0x8d6e63, glow: 0xffd54f, shape: 'box', size: [0.4, 0.4, 0.4], speed: 14,
+    trailColor: null, trailRate: 0, hitRadius: 2.6, shake: 0.18,
+    burst: { count: 10, speed: [2, 4.5], colors: [0x8d6e63, 0x6b4a2f, 0xffd54f], gravity: 9, spreadUp: 0.1 },
+  },
+  schild: {
+    color: 0xec407a, glow: 0x7e57c2, shape: 'torus', size: [0.22, 0.09], speed: 18,
+    trailColor: 0xec407a, rainbow: true, trailRate: 55,
+    burst: { count: 14, speed: [2.5, 5], colors: [0xec407a, 0x7e57c2, 0x4fc3f7, 0xffd76a, 0x63e6a0], gravity: 3, spreadUp: 0.5 },
+  },
+  flug: {
+    color: 0x81d4fa, glow: 0xffffff, shape: 'cone', size: [0.2, 0.5], speed: 20,
+    trailColor: 0xe8f7ff, trailRate: 60,
+    burst: { count: 12, speed: [1.5, 3.5], colors: [0xffffff, 0x81d4fa, 0xe0f7ff], gravity: 0.6, spreadUp: 0.8 },
+  },
+};
 
 const World = {
   canvas: null, scene: null, camera: null, renderer: null,
@@ -34,19 +81,23 @@ const World = {
   bobPhase: 0,
   health: MAX_HEALTH, lastHitAt: 0, lastRegenAt: 0, invulnUntil: 0,
   foxTemplate: null, foxClips: null,
+  shakeTime: 0, shakeMag: 0,
+  _v1: new THREE.Vector3(), _v2: new THREE.Vector3(),
+  _noise: new ImprovedNoise(),
+  projGeo: {},
 
   init(canvas) {
     this.canvas = canvas;
     const scene = new THREE.Scene();
-    scene.fog = new THREE.Fog(0x5b3a8f, 16, this.worldRadius + 6);
+    scene.fog = new THREE.Fog(0x5b3a8f, 16, this.worldRadius + 8);
     this.scene = scene;
 
-    const camera = new THREE.PerspectiveCamera(69, canvas.clientWidth / canvas.clientHeight, 0.1, 100);
+    const camera = new THREE.PerspectiveCamera(69, canvas.clientWidth / canvas.clientHeight, 0.1, 110);
     this.camera = camera;
 
     let renderer;
     try {
-      renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: false });
+      renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: false, powerPreference: 'high-performance' });
     } catch (e) { console.error('WebGL init failed', e); return false; }
     renderer.setClearColor(0x2a1458, 1);
     renderer.shadowMap.enabled = true;
@@ -58,12 +109,14 @@ const World = {
 
     this.buildSky();
     this.buildLights();
-    this.buildGround();
+    this.buildTerrain();
+    this.buildRiver();
     this.buildDecor();
+    this.buildProjectileGeometries();
     this.loadTreeModel();
     this.loadFoxModel();
 
-    for (let i = 0; i < 6; i++) this.spawnMonsterSlot(1 + i * 0.4);
+    for (let i = 0; i < 5; i++) this.spawnMonsterSlot(1 + i * 0.4);
     for (let i = 0; i < 6; i++) this.spawnStar(0);
 
     this.setupInput();
@@ -71,14 +124,123 @@ const World = {
     return true;
   },
 
+  /* ---------------- terrain: layered noise, mountains at the rim, a carved river ---------------- */
+
+  fbm(x, z, octaves) {
+    let amp = 1, freq = 1, sum = 0, norm = 0;
+    for (let o = 0; o < octaves; o++) {
+      sum += this._noise.noise(x * freq, z * freq, 4.7) * amp;
+      norm += amp;
+      amp *= 0.5;
+      freq *= 2.15;
+    }
+    return sum / norm;
+  },
+  riverCenterX(z) {
+    return Math.sin(z * 0.05) * 9 + Math.sin(z * 0.011) * 6;
+  },
+  heightAt(x, z) {
+    const r = Math.hypot(x, z);
+    const mountainMask = smoothstep(PLAY_RADIUS, this.worldRadius * 0.92, r);
+    const n = this.fbm(x * 0.045, z * 0.045, 5);
+    let h = mountainMask * (n * 0.5 + 0.5) * 13;
+    h += (1 - mountainMask) * Math.max(0, n) * 0.7;
+
+    const halfWidth = 3.2;
+    const dist = Math.abs(x - this.riverCenterX(z));
+    const riverInfluence = 1 - smoothstep(0, halfWidth, dist);
+    h -= riverInfluence * 1.8;
+    return h;
+  },
+
+  buildTerrain() {
+    const size = this.worldRadius * 2;
+    const segs = 64;
+    const geo = new THREE.PlaneGeometry(size, size, segs, segs);
+    geo.rotateX(-Math.PI / 2);
+    const pos = geo.attributes.position;
+    const colors = new Float32Array(pos.count * 3);
+    const cLow = new THREE.Color(0x8a7ac0), cMid = new THREE.Color(0x8d9a68), cHigh = new THREE.Color(0xaeaeb8), cSnow = new THREE.Color(0xf0edf7), cRiverBed = new THREE.Color(0x4a3f7a);
+    for (let i = 0; i < pos.count; i++) {
+      const x = pos.getX(i), z = pos.getZ(i);
+      const h = this.heightAt(x, z);
+      pos.setY(i, h);
+
+      const dist = Math.abs(x - this.riverCenterX(z));
+      const riverT = 1 - smoothstep(0, 3.2, dist);
+      let col;
+      if (h < -0.6) col = cRiverBed.clone();
+      else if (h < 1.2) col = cLow.clone().lerp(cMid, smoothstep(-0.6, 1.2, h));
+      else if (h < 6) col = cMid.clone().lerp(cHigh, smoothstep(1.2, 6, h));
+      else col = cHigh.clone().lerp(cSnow, smoothstep(6, 10.5, h));
+      col.lerp(cRiverBed, riverT * 0.6);
+      colors[i * 3] = col.r; colors[i * 3 + 1] = col.g; colors[i * 3 + 2] = col.b;
+    }
+    geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+    geo.computeVertexNormals();
+
+    const tex = new THREE.TextureLoader().load('assets/ground_arcane.jpg');
+    tex.wrapS = THREE.RepeatWrapping; tex.wrapT = THREE.RepeatWrapping;
+    tex.repeat.set(size / 8, size / 8);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    const mat = new THREE.MeshStandardMaterial({ map: tex, vertexColors: true, roughness: 0.95, metalness: 0.04 });
+    const ground = new THREE.Mesh(geo, mat);
+    ground.receiveShadow = true;
+    this.scene.add(ground);
+    this.terrain = ground;
+
+    const ringGeo = new THREE.RingGeometry(2, 6, 40);
+    const ringMat = new THREE.MeshBasicMaterial({ color: 0xffd76a, transparent: true, opacity: 0.16, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide });
+    const ring = new THREE.Mesh(ringGeo, ringMat);
+    ring.rotation.x = -Math.PI / 2;
+    ring.position.y = this.heightAt(0, 0) + 0.04;
+    this.scene.add(ring);
+  },
+
+  buildRiver() {
+    const halfWidth = 2.5;
+    const steps = 64;
+    const positions = [];
+    const uvs = [];
+    for (let i = 0; i <= steps; i++) {
+      const z = -this.worldRadius + (i / steps) * this.worldRadius * 2;
+      const cx = this.riverCenterX(z);
+      const y = this.heightAt(cx, z) + 0.18;
+      positions.push(cx - halfWidth, y, z, cx + halfWidth, y, z);
+      uvs.push(0, i / 4, 1, i / 4);
+    }
+    const indices = [];
+    for (let i = 0; i < steps; i++) {
+      const a = i * 2, b = i * 2 + 1, c = i * 2 + 2, d = i * 2 + 3;
+      indices.push(a, c, b, b, c, d);
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    geo.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+    geo.setIndex(indices);
+    geo.computeVertexNormals();
+    const tex = new THREE.TextureLoader().load('assets/glow.png');
+    tex.wrapS = THREE.RepeatWrapping; tex.wrapT = THREE.RepeatWrapping;
+    tex.repeat.set(1, 8);
+    const mat = new THREE.MeshStandardMaterial({
+      color: 0x2f7bb0, transparent: true, opacity: 0.75, roughness: 0.25, metalness: 0.1,
+      emissive: 0x0e3a55, emissiveIntensity: 0.4, alphaMap: tex,
+    });
+    const river = new THREE.Mesh(geo, mat);
+    this.scene.add(river);
+    this.riverTex = tex;
+  },
+
+  /* ---------------- sky / lights ---------------- */
+
   buildSky() {
-    const geo = new THREE.SphereGeometry(90, 24, 16);
+    const geo = new THREE.SphereGeometry(95, 24, 16);
     const colorTop = new THREE.Color(0x2a1458);
     const colorBottom = new THREE.Color(0xff9d5c);
     const pos = geo.attributes.position;
     const colors = new Float32Array(pos.count * 3);
     for (let i = 0; i < pos.count; i++) {
-      const y = pos.getY(i) / 90;
+      const y = pos.getY(i) / 95;
       const t = Math.max(0, Math.min(1, y * 0.5 + 0.5));
       const c = colorBottom.clone().lerp(colorTop, t);
       colors[i * 3] = c.r; colors[i * 3 + 1] = c.g; colors[i * 3 + 2] = c.b;
@@ -89,11 +251,8 @@ const World = {
     sky.renderOrder = -10;
     this.scene.add(sky);
 
-    const glowTex = new THREE.TextureLoader().load('assets/glow.png');
-    const moonMat = new THREE.SpriteMaterial({ map: glowTex, color: 0xffe0c2, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, fog: false });
-    const moon = new THREE.Sprite(moonMat);
-    moon.scale.set(9, 9, 1);
-    moon.position.set(-22, 14, -55);
+    const moon = this.makeGlowSprite(0xffe0c2, 9, 1);
+    moon.position.set(-22, 16, -58);
     this.scene.add(moon);
   },
 
@@ -103,34 +262,18 @@ const World = {
     const sun = new THREE.DirectionalLight(0xffe3c2, 1.4);
     sun.position.set(14, 22, 10);
     sun.castShadow = true;
-    sun.shadow.mapSize.set(1024, 1024);
-    sun.shadow.camera.left = -32; sun.shadow.camera.right = 32;
-    sun.shadow.camera.top = 32; sun.shadow.camera.bottom = -32;
-    sun.shadow.camera.near = 1; sun.shadow.camera.far = 60;
+    sun.shadow.mapSize.set(768, 768);
+    const d = PLAY_RADIUS + 8;
+    sun.shadow.camera.left = -d; sun.shadow.camera.right = d;
+    sun.shadow.camera.top = d; sun.shadow.camera.bottom = -d;
+    sun.shadow.camera.near = 1; sun.shadow.camera.far = 55;
     sun.shadow.bias = -0.003;
     this.scene.add(sun);
     this.scene.add(sun.target);
+    this.sun = sun;
   },
 
-  buildGround() {
-    const tex = new THREE.TextureLoader().load('assets/ground_arcane.jpg');
-    tex.wrapS = THREE.RepeatWrapping; tex.wrapT = THREE.RepeatWrapping;
-    tex.repeat.set(10, 10);
-    tex.colorSpace = THREE.SRGBColorSpace;
-    const mat = new THREE.MeshStandardMaterial({ map: tex, color: 0x8a7fc0, roughness: 0.92, metalness: 0.05 });
-    const geo = new THREE.CircleGeometry(this.worldRadius, 64);
-    const ground = new THREE.Mesh(geo, mat);
-    ground.rotation.x = -Math.PI / 2;
-    ground.receiveShadow = true;
-    this.scene.add(ground);
-
-    const ringGeo = new THREE.RingGeometry(2, 6, 48);
-    const ringMat = new THREE.MeshBasicMaterial({ color: 0xffd76a, transparent: true, opacity: 0.16, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide });
-    const ring = new THREE.Mesh(ringGeo, ringMat);
-    ring.rotation.x = -Math.PI / 2;
-    ring.position.y = 0.03;
-    this.scene.add(ring);
-  },
+  /* ---------------- shared helpers ---------------- */
 
   makeGlowSprite(color, size, opacity) {
     const tex = this._glowTex || (this._glowTex = new THREE.TextureLoader().load('assets/glow.png'));
@@ -148,19 +291,37 @@ const World = {
     return m;
   },
 
+  buildProjectileGeometries() {
+    Object.entries(POWER_VISUALS).forEach(([id, v]) => {
+      let geo;
+      if (v.shape === 'sphere') geo = new THREE.SphereGeometry(v.size, 10, 8);
+      else if (v.shape === 'octahedron') geo = new THREE.OctahedronGeometry(v.size, 0);
+      else if (v.shape === 'box') geo = new THREE.BoxGeometry(v.size[0], v.size[1], v.size[2]);
+      else if (v.shape === 'torus') geo = new THREE.TorusGeometry(v.size[0], v.size[1], 8, 16);
+      else if (v.shape === 'cone') geo = new THREE.ConeGeometry(v.size[0], v.size[1], 8);
+      else geo = new THREE.SphereGeometry(0.28, 8, 6);
+      this.projGeo[id] = geo;
+    });
+  },
+
+  /* ---------------- decor ---------------- */
+
   buildDecor() {
     const rand = mulberry32(1337);
     for (let i = 0; i < 16; i++) {
       const a = rand() * Math.PI * 2;
-      const d = 14 + rand() * (this.worldRadius - 18);
+      const d = 12 + rand() * (this.worldRadius - 16);
       const pos = new THREE.Vector3(Math.cos(a) * d, 0, Math.sin(a) * d);
+      pos.y = this.heightAt(pos.x, pos.z);
       const kind = rand() > 0.5 ? 'crystal' : 'tree';
       this.decor.push({ kind, pos, rotY: rand() * Math.PI * 2, scale: 0.8 + rand() * 0.7, obj: null });
     }
-    for (let i = 0; i < 8; i++) {
+    for (let i = 0; i < 10; i++) {
       const a = rand() * Math.PI * 2;
-      const d = 10 + rand() * (this.worldRadius - 14);
-      this.decor.push({ kind: 'rock', pos: new THREE.Vector3(Math.cos(a) * d, 0, Math.sin(a) * d), rotY: rand() * Math.PI * 2, scale: 0.6 + rand() * 0.8, obj: null });
+      const d = 9 + rand() * (this.worldRadius - 13);
+      const pos = new THREE.Vector3(Math.cos(a) * d, 0, Math.sin(a) * d);
+      pos.y = this.heightAt(pos.x, pos.z);
+      this.decor.push({ kind: 'rock', pos, rotY: rand() * Math.PI * 2, scale: 0.6 + rand() * 0.9, obj: null });
     }
 
     const crystalMat = new THREE.MeshStandardMaterial({ color: 0x9d7bff, emissive: 0x4a2f8f, emissiveIntensity: 0.6, roughness: 0.25, metalness: 0.3 });
@@ -178,7 +339,7 @@ const World = {
         const glow = this.makeGlowSprite(0xb385ff, 1.6 * d.scale, 0.4);
         glow.position.y = 1.5;
         group.add(glow);
-        if (crystalLights < 5) {
+        if (crystalLights < 4) {
           const pl = new THREE.PointLight(0x9d7bff, 1.2, 6, 2);
           pl.position.y = 1.2;
           group.add(pl);
@@ -192,7 +353,7 @@ const World = {
         d.obj = group;
       } else if (d.kind === 'rock') {
         const rock = new THREE.Mesh(new THREE.DodecahedronGeometry(0.7, 0), rockMat);
-        rock.position.copy(d.pos); rock.position.y = 0.35 * d.scale;
+        rock.position.copy(d.pos); rock.position.y += 0.35 * d.scale;
         rock.rotation.set(d.rotY * 0.3, d.rotY, d.rotY * 0.6);
         rock.scale.set(d.scale, d.scale * 0.8, d.scale);
         rock.castShadow = true; rock.receiveShadow = true;
@@ -206,7 +367,6 @@ const World = {
     new OBJLoader().load('assets/tree.obj', (obj) => {
       const mat = new THREE.MeshStandardMaterial({ color: 0x4a3050, roughness: 0.85 });
       obj.traverse(c => { if (c.isMesh) { c.material = mat; c.castShadow = true; c.receiveShadow = true; } });
-      obj.geometry && (obj.geometry.computeVertexNormals && obj.geometry.computeVertexNormals());
       const box = new THREE.Box3().setFromObject(obj);
       const height = box.max.y - box.min.y || 1;
       const targetHeight = 3.6;
@@ -299,18 +459,21 @@ const World = {
     m.currentAction = next;
   },
 
+  /* ---------------- spawning ---------------- */
+
   randomRingPos(minR, maxR) {
     const a = Math.random() * Math.PI * 2;
     const d = minR + Math.random() * (maxR - minR);
-    return new THREE.Vector3(Math.cos(a) * d, 0, Math.sin(a) * d);
+    const x = Math.cos(a) * d, z = Math.sin(a) * d;
+    return new THREE.Vector3(x, this.heightAt(x, z), z);
   },
 
   randomMonsterSpawnPos() {
     for (let tries = 0; tries < 12; tries++) {
-      const pos = this.randomRingPos(7, this.worldRadius - 6);
-      if (pos.distanceTo(this.player.pos) > 12) return pos;
+      const pos = this.randomRingPos(6, PLAY_RADIUS + 2);
+      if (pos.distanceTo(this.player.pos) > 11) return pos;
     }
-    return this.randomRingPos(7, this.worldRadius - 6);
+    return this.randomRingPos(6, PLAY_RADIUS + 2);
   },
 
   spawnMonsterSlot(delay) {
@@ -328,7 +491,7 @@ const World = {
   },
 
   spawnStar(delay) {
-    const pos = this.randomRingPos(5, this.worldRadius - 6);
+    const pos = this.randomRingPos(5, PLAY_RADIUS);
     const glow = this.makeGlowSprite(0xffe08a, 1.7, 0.55);
     const core = new THREE.Mesh(
       new THREE.OctahedronGeometry(0.4, 0),
@@ -342,6 +505,8 @@ const World = {
     this.scene.add(group);
     this.stars.push({ pos, group, core, phase: Math.random() * Math.PI * 2, alive: false, spawnAt: performance.now() + (delay || 0) * 1000 });
   },
+
+  /* ---------------- input ---------------- */
 
   setupInput() {
     const joyBase = document.getElementById('joystick-base');
@@ -421,12 +586,14 @@ const World = {
   },
 
   resize() {
-    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const dpr = Math.min(window.devicePixelRatio || 1, 1.5);
     this.renderer.setPixelRatio(dpr);
     this.renderer.setSize(this.canvas.clientWidth, this.canvas.clientHeight, false);
     this.camera.aspect = this.canvas.clientWidth / this.canvas.clientHeight;
     this.camera.updateProjectionMatrix();
   },
+
+  /* ---------------- combat ---------------- */
 
   fireProjectile() {
     if (this.castCooldown > performance.now()) return;
@@ -444,24 +611,22 @@ const World = {
     let target = null, bestDot = 0.82;
     this.monsters.forEach(m => {
       if (!m.alive) return;
-      const toM = m.pos.clone().sub(this.player.pos).normalize();
+      const toM = this._v1.copy(m.pos).sub(this.player.pos).normalize();
       const d = dir.dot(toM);
       if (d > bestDot) { bestDot = d; target = m; }
     });
-    const p = ST.POWERS.find(p => p.id === powerId);
-    const color = new THREE.Color(p.color);
-    const mesh = new THREE.Mesh(
-      new THREE.SphereGeometry(0.28, 10, 8),
-      new THREE.MeshBasicMaterial({ color }),
-    );
-    const glow = this.makeGlowSprite(color.getHex(), 1.1, 0.75);
+    const visual = POWER_VISUALS[powerId];
+    const mat = new THREE.MeshBasicMaterial({ color: visual.color });
+    const mesh = new THREE.Mesh(this.projGeo[powerId], mat);
+    if (visual.shape === 'cone') mesh.rotation.x = Math.PI / 2;
+    const glow = this.makeGlowSprite(visual.glow, 1.1, 0.75);
     mesh.add(glow);
     mesh.position.copy(this.player.pos);
     this.scene.add(mesh);
-    this.projectiles.push({ pos: mesh.position, dir, powerId, life: 2.2, target, obj: mesh });
+    this.projectiles.push({ pos: mesh.position, dir, powerId, visual, life: 2.4, target, obj: mesh, trailTimer: 0 });
   },
 
-  onMonsterKilled(m) {
+  onMonsterKilled(m, visual) {
     const state = ST.get();
     state.kills += 1;
     const reward = 3 + Math.floor(Math.random() * 2);
@@ -471,7 +636,8 @@ const World = {
     ST.sfx.hit();
     window.G.ui.toast(`+${reward} ⭐`);
     window.G.ui.updateHud();
-    this.spawnKillBurst(m.pos, m.colorKey);
+    this.spawnKillBurst(m.pos, visual);
+    if (visual.shake) { this.shakeTime = 0.25; this.shakeMag = visual.shake; }
     const newAch = ST.checkAchievements();
     if (newAch.length) window.G.ui.queueAchievements(newAch);
     m.alive = false;
@@ -493,22 +659,30 @@ const World = {
     s.alive = false;
     s.group.visible = false;
     s.spawnAt = performance.now() + 4000 + Math.random() * 4000;
-    s.pos = this.randomRingPos(5, this.worldRadius - 6);
+    s.pos = this.randomRingPos(5, PLAY_RADIUS);
   },
 
-  spawnKillBurst(pos, colorKey) {
-    const tint = MONSTER_TINTS[colorKey] || 0xffffff;
-    for (let i = 0; i < 10; i++) {
+  spawnTrailParticle(pos, color) {
+    const sprite = this.makeGlowSprite(color, 0.45, 0.8);
+    sprite.position.copy(pos);
+    this.scene.add(sprite);
+    this.particles.push({ obj: sprite, vel: new THREE.Vector3(0, 0.2, 0), life: 0.3, maxLife: 0.3, grav: 0.4 });
+  },
+
+  spawnKillBurst(pos, visual) {
+    const b = visual.burst;
+    for (let i = 0; i < b.count; i++) {
       const a = Math.random() * Math.PI * 2;
-      const el = Math.random() * Math.PI - Math.PI / 2;
-      const speed = 2 + Math.random() * 2.5;
-      const sprite = this.makeGlowSprite(tint, 0.5, 0.9);
+      const el = Math.random() * Math.PI * b.spreadUp;
+      const speed = b.speed[0] + Math.random() * (b.speed[1] - b.speed[0]);
+      const color = b.colors[Math.floor(Math.random() * b.colors.length)];
+      const sprite = this.makeGlowSprite(color, 0.5, 0.9);
       sprite.position.copy(pos).add(new THREE.Vector3(0, 0.6, 0));
       this.scene.add(sprite);
       this.particles.push({
         obj: sprite,
-        vel: new THREE.Vector3(Math.cos(a) * Math.cos(el) * speed, Math.sin(el) * speed + 1.5, Math.sin(a) * Math.cos(el) * speed),
-        life: 0.7, maxLife: 0.7,
+        vel: new THREE.Vector3(Math.cos(a) * Math.cos(el) * speed, Math.sin(el) * speed + 1.2, Math.sin(a) * Math.cos(el) * speed),
+        life: 0.7, maxLife: 0.7, grav: b.gravity,
       });
     }
   },
@@ -531,17 +705,17 @@ const World = {
     }
   },
 
+  /* ---------------- monster AI ---------------- */
+
   updateMonsterAI(m, dt, now) {
     if (!m.alive) return;
-    const toPlayer = this.player.pos.clone().sub(m.pos);
+    const toPlayer = this._v1.copy(this.player.pos).sub(m.pos);
     toPlayer.y = 0;
     const dist = toPlayer.length();
-    let speed = 0;
     let animName = 'survey';
 
     if (dist < 2.2) {
       m.state = 'attack';
-      speed = 0;
       animName = 'survey';
       if (now - m.lastAttackTick > 2200) {
         m.lastAttackTick = now;
@@ -551,10 +725,9 @@ const World = {
       m.facing += angleDiff(m.facing, angle) * Math.min(1, dt * 5);
     } else if (dist < 11) {
       m.state = 'chase';
-      speed = 4.0;
       animName = 'run';
       const dir = toPlayer.normalize();
-      m.pos.addScaledVector(dir, speed * dt);
+      m.pos.addScaledVector(dir, 4.0 * dt);
       const angle = Math.atan2(dir.x, dir.z);
       m.facing += angleDiff(m.facing, angle) * Math.min(1, dt * 6);
     } else {
@@ -567,21 +740,20 @@ const World = {
           } else {
             const a = Math.random() * Math.PI * 2;
             const d = 3 + Math.random() * 4;
-            const target = m.pos.clone().add(new THREE.Vector3(Math.cos(a) * d, 0, Math.sin(a) * d));
-            const r = target.length();
-            if (r > this.worldRadius - 5) target.multiplyScalar((this.worldRadius - 5) / r);
-            m.wanderTarget = target;
+            const target = this._v2.set(m.pos.x + Math.cos(a) * d, 0, m.pos.z + Math.sin(a) * d);
+            const r = Math.hypot(target.x, target.z);
+            if (r > PLAY_RADIUS + 1) { target.x *= (PLAY_RADIUS + 1) / r; target.z *= (PLAY_RADIUS + 1) / r; }
+            m.wanderTarget = new THREE.Vector3(target.x, 0, target.z);
           }
         }
       }
       if (m.wanderTarget && now > m.idleUntil) {
-        speed = 1.5;
-        animName = 'walk';
-        const dir = m.wanderTarget.clone().sub(m.pos);
+        const dir = this._v2.copy(m.wanderTarget).sub(m.pos);
         dir.y = 0;
         if (dir.lengthSq() > 0.0001) {
+          animName = 'walk';
           dir.normalize();
-          m.pos.addScaledVector(dir, speed * dt);
+          m.pos.addScaledVector(dir, 1.5 * dt);
           const angle = Math.atan2(dir.x, dir.z);
           m.facing += angleDiff(m.facing, angle) * Math.min(1, dt * 4);
         }
@@ -589,6 +761,8 @@ const World = {
         animName = 'survey';
       }
     }
+
+    m.pos.y = this.heightAt(m.pos.x, m.pos.z);
 
     if (m.built) {
       this.crossfadeTo(m, animName, 0.35);
@@ -598,21 +772,20 @@ const World = {
     }
   },
 
+  /* ---------------- main loop ---------------- */
+
   update(dt) {
     if (this.paused) return;
     const p = this.player;
     const speed = 6.2;
     if (Math.abs(this.move.x) > 0.05 || Math.abs(this.move.z) > 0.05) {
-      const forward = new THREE.Vector3(-Math.sin(p.yaw), 0, -Math.cos(p.yaw));
-      const right = new THREE.Vector3(Math.cos(p.yaw), 0, -Math.sin(p.yaw));
+      const sy = Math.sin(p.yaw), cy = Math.cos(p.yaw);
       const mx = this.move.x, mz = this.move.z;
-      const moveVec = new THREE.Vector3(
-        right.x * mx - forward.x * mz, 0, right.z * mx - forward.z * mz,
-      );
-      if (moveVec.lengthSq() > 0.0001) {
-        moveVec.normalize();
-        p.pos.addScaledVector(moveVec, speed * dt);
-      }
+      const moveX = cy * mx + sy * mz;
+      const moveZ = -sy * mx + cy * mz;
+      const len = Math.hypot(moveX, moveZ) || 1;
+      p.pos.x += (moveX / len) * speed * dt;
+      p.pos.z += (moveZ / len) * speed * dt;
       this.bobPhase += dt * 9;
     }
     const distFromCenter = Math.hypot(p.pos.x, p.pos.z);
@@ -620,12 +793,21 @@ const World = {
       const s = (this.worldRadius - 1.5) / distFromCenter;
       p.pos.x *= s; p.pos.z *= s;
     }
-    p.pos.y = 1.6 + Math.sin(this.bobPhase) * 0.04;
+    const groundY = this.heightAt(p.pos.x, p.pos.z);
+    p.pos.y = groundY + 1.6 + Math.sin(this.bobPhase) * 0.04;
 
     this.camera.position.copy(p.pos);
+    if (this.shakeTime > 0) {
+      this.shakeTime -= dt;
+      const s = this.shakeMag * (this.shakeTime / 0.25);
+      this.camera.position.x += (Math.random() - 0.5) * s;
+      this.camera.position.y += (Math.random() - 0.5) * s;
+    }
     this.camera.rotation.order = 'YXZ';
     this.camera.rotation.y = p.yaw;
     this.camera.rotation.x = p.pitch;
+
+    if (this.riverTex) this.riverTex.offset.y -= dt * 0.35;
 
     const now = performance.now();
     if (now - this.lastHitAt > 3500 && this.health < MAX_HEALTH && now - this.lastRegenAt > 1800) {
@@ -648,7 +830,7 @@ const World = {
       if (!s.alive && now >= s.spawnAt) { s.alive = true; s.group.visible = true; }
       if (s.alive) {
         s.phase += dt * 2.4;
-        s.group.position.y = 1.0 + Math.sin(s.phase) * 0.2;
+        s.group.position.y = s.pos.y + 1.0 + Math.sin(s.phase) * 0.2;
         s.group.rotation.y = s.phase * 1.4;
         if (p.pos.distanceTo(s.pos) < 2.1) this.onStarCollected(s);
       }
@@ -657,14 +839,28 @@ const World = {
     for (let i = this.projectiles.length - 1; i >= 0; i--) {
       const pr = this.projectiles[i];
       if (pr.target && pr.target.alive) {
-        const toT = pr.target.pos.clone().sub(pr.pos).normalize();
+        const toT = this._v1.copy(pr.target.pos).sub(pr.pos).normalize();
         pr.dir.lerp(toT, 0.14).normalize();
       }
-      pr.pos.addScaledVector(pr.dir, 24 * dt);
+      pr.pos.addScaledVector(pr.dir, pr.visual.speed * dt);
       pr.life -= dt;
+
+      if (pr.visual.rainbow) {
+        pr.obj.material.color.setHSL((now * 0.0006) % 1, 0.85, 0.6);
+      }
+      if (pr.visual.trailColor && pr.visual.trailRate) {
+        pr.trailTimer -= dt * 1000;
+        if (pr.trailTimer <= 0) {
+          pr.trailTimer = pr.visual.trailRate;
+          const c = pr.visual.rainbow ? new THREE.Color().setHSL((now * 0.0006) % 1, 0.85, 0.6).getHex() : pr.visual.trailColor;
+          this.spawnTrailParticle(pr.pos, c);
+        }
+      }
+
       let hit = false;
+      const hitR = pr.visual.hitRadius || 2.0;
       this.monsters.forEach(m => {
-        if (m.alive && m.pos.distanceTo(pr.pos) < 2.0) { this.onMonsterKilled(m); hit = true; }
+        if (!hit && m.alive && m.pos.distanceTo(pr.pos) < hitR) { this.onMonsterKilled(m, pr.visual); hit = true; }
       });
       if (hit || pr.life <= 0) { this.scene.remove(pr.obj); this.projectiles.splice(i, 1); }
     }
@@ -672,7 +868,7 @@ const World = {
     for (let i = this.particles.length - 1; i >= 0; i--) {
       const pa = this.particles[i];
       pa.obj.position.addScaledVector(pa.vel, dt);
-      pa.vel.y -= 6 * dt;
+      pa.vel.y -= (pa.grav ?? 6) * dt;
       pa.life -= dt;
       const s = Math.max(0.05, pa.life / pa.maxLife);
       pa.obj.material.opacity = 0.9 * s;
@@ -704,13 +900,6 @@ const World = {
   pause() { this.paused = true; },
   resume() { this.paused = false; },
 };
-
-function angleDiff(from, to) {
-  let d = (to - from) % (Math.PI * 2);
-  if (d > Math.PI) d -= Math.PI * 2;
-  if (d < -Math.PI) d += Math.PI * 2;
-  return d;
-}
 
 window.G = window.G || {};
 window.G.world = World;

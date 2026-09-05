@@ -1,4 +1,4 @@
-const CACHE_NAME = 'ueberheld-cache-v4';
+const CACHE_NAME = 'ueberheld-cache-v5';
 const ASSETS = [
   './',
   './index.html',
@@ -17,6 +17,7 @@ const ASSETS = [
   './vendor/three/examples/jsm/loaders/OBJLoader.js',
   './vendor/three/examples/jsm/utils/BufferGeometryUtils.js',
   './vendor/three/examples/jsm/utils/SkeletonUtils.js',
+  './vendor/three/examples/jsm/math/ImprovedNoise.js',
 ];
 
 self.addEventListener('install', event => {
