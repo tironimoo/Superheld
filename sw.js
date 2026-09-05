@@ -1,18 +1,22 @@
-const CACHE_NAME = 'ueberheld-cache-v3';
+const CACHE_NAME = 'ueberheld-cache-v4';
 const ASSETS = [
   './',
   './index.html',
   './style.css',
-  './math.js',
-  './geometry.js',
   './state.js',
-  './world.js',
+  './game.js',
   './ui.js',
   './manifest.json',
   './icon.svg',
   './assets/tree.obj',
   './assets/glow.png',
   './assets/ground_arcane.jpg',
+  './assets/models/fox.glb',
+  './vendor/three/three.module.min.js',
+  './vendor/three/examples/jsm/loaders/GLTFLoader.js',
+  './vendor/three/examples/jsm/loaders/OBJLoader.js',
+  './vendor/three/examples/jsm/utils/BufferGeometryUtils.js',
+  './vendor/three/examples/jsm/utils/SkeletonUtils.js',
 ];
 
 self.addEventListener('install', event => {

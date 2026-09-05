@@ -73,6 +73,34 @@
     }
   }
 
+  /* ---------- Health hearts ---------- */
+  let lastHp = null;
+  function updateHealth(hp, maxHp, hit) {
+    const row = $('#hud-hearts');
+    if (row.children.length !== maxHp) {
+      row.innerHTML = '';
+      for (let i = 0; i < maxHp; i++) {
+        const span = document.createElement('span');
+        span.textContent = '❤️';
+        row.appendChild(span);
+      }
+    }
+    Array.from(row.children).forEach((el, i) => {
+      el.classList.toggle('heart-lost', i >= hp);
+      el.textContent = i >= hp ? '🖤' : '❤️';
+    });
+    if (hit) {
+      const flash = $('#damage-flash');
+      flash.classList.add('active');
+      setTimeout(() => flash.classList.remove('active'), 220);
+      if (lastHp !== null && hp < lastHp && row.children[hp]) {
+        row.children[hp].classList.add('heart-hit');
+        setTimeout(() => row.children[hp] && row.children[hp].classList.remove('heart-hit'), 400);
+      }
+    }
+    lastHp = hp;
+  }
+
   /* ---------- Toasts (lightweight, non-blocking) ---------- */
   function toast(text) {
     const el = document.createElement('div');
@@ -353,6 +381,6 @@
     }
   }
 
-  window.G.ui = { toast, queueAchievements, updateHud };
+  window.G.ui = { toast, queueAchievements, updateHud, updateHealth };
   document.addEventListener('DOMContentLoaded', init);
 })();
