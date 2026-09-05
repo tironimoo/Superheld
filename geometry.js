@@ -17,15 +17,21 @@
     const positions = [];
     const normals = [];
     const colors = [];
+    const uvs = [];
     faces.forEach(face => {
       const a = rawVerts[face[0]], b = rawVerts[face[1]], c = rawVerts[face[2]];
       const n = faceNormal(a, b, c);
       const f = jitter ? (0.82 + Math.sin(face[0] * 12.9898 + face[1] * 78.233 + face[2] * 37.719) * 0.5 + 0.5) * 0.3 + 0.82 : 1;
       const col = [colorRgb[0] * f, colorRgb[1] * f, colorRgb[2] * f];
       [a, b, c].forEach(v => positions.push(v[0], v[1], v[2]));
-      for (let i = 0; i < 3; i++) { normals.push(n[0], n[1], n[2]); colors.push(col[0], col[1], col[2]); }
+      for (let i = 0; i < 3; i++) { normals.push(n[0], n[1], n[2]); colors.push(col[0], col[1], col[2]); uvs.push(0, 0); }
     });
-    return { positions: new Float32Array(positions), normals: new Float32Array(normals), colors: new Float32Array(colors) };
+    return {
+      positions: new Float32Array(positions),
+      normals: new Float32Array(normals),
+      colors: new Float32Array(colors),
+      uvs: new Float32Array(uvs),
+    };
   }
 
   function icosahedron(radius, color, jitter) {
@@ -104,18 +110,21 @@
     return buildFlat(raw, faces, hexToRgb(color), jitter);
   }
 
-  // Smooth-shaded magic ground disc: concentric rings colored by distance, normals up.
-  function groundDisc(radius, segments, rings, colorCenterHex, colorEdgeHex) {
+  // Smooth-shaded magic ground disc: concentric rings colored by distance, normals up,
+  // plus tiled UVs so a real stone/marble texture can be layered on top.
+  function groundDisc(radius, segments, rings, colorCenterHex, colorEdgeHex, uvTiling) {
     const cCenter = hexToRgb(colorCenterHex);
     const cEdge = hexToRgb(colorEdgeHex);
+    const tiling = uvTiling || 0.15;
     const positions = [];
     const normals = [];
     const colors = [];
+    const uvs = [];
     const indices = [];
-    const ringPositions = [[0, 0, 0]];
     positions.push(0, 0, 0);
     normals.push(0, 1, 0);
     colors.push(cCenter[0], cCenter[1], cCenter[2]);
+    uvs.push(0.5, 0.5);
     for (let r = 1; r <= rings; r++) {
       const dist = (r / rings) * radius;
       const t = r / rings;
@@ -125,6 +134,7 @@
         const x = Math.cos(a) * dist, z = Math.sin(a) * dist;
         positions.push(x, 0, z);
         normals.push(0, 1, 0);
+        uvs.push((x * tiling + 0.5), (z * tiling + 0.5));
         const base = [
           cCenter[0] + (cEdge[0] - cCenter[0]) * t,
           cCenter[1] + (cEdge[1] - cCenter[1]) * t,
@@ -153,7 +163,57 @@
       positions: new Float32Array(positions),
       normals: new Float32Array(normals),
       colors: new Float32Array(colors),
+      uvs: new Float32Array(uvs),
       indices: new Uint16Array(indices),
+    };
+  }
+
+  // Parses a plain Wavefront .obj (v / vt / vn / f) into a flat triangle-soup
+  // buffer set. Only positions + normals + uvs are used (no material groups).
+  function parseOBJ(text, colorRgb) {
+    const v = [], vt = [], vn = [];
+    const positions = [], normals = [], uvs = [], colors = [];
+    const lines = text.split('\n');
+    for (let li = 0; li < lines.length; li++) {
+      const line = lines[li];
+      if (line.charCodeAt(0) !== 118 && line.charCodeAt(0) !== 102) continue; // quick skip: not 'v' or 'f'
+      const parts = line.trim().split(/\s+/);
+      const tag = parts[0];
+      if (tag === 'v') {
+        v.push([parseFloat(parts[1]), parseFloat(parts[2]), parseFloat(parts[3])]);
+      } else if (tag === 'vt') {
+        vt.push([parseFloat(parts[1]), parseFloat(parts[2])]);
+      } else if (tag === 'vn') {
+        vn.push([parseFloat(parts[1]), parseFloat(parts[2]), parseFloat(parts[3])]);
+      } else if (tag === 'f') {
+        const refs = parts.slice(1).map(p => {
+          const bits = p.split('/');
+          return {
+            v: parseInt(bits[0], 10) - 1,
+            vt: bits[1] ? parseInt(bits[1], 10) - 1 : -1,
+            vn: bits[2] ? parseInt(bits[2], 10) - 1 : -1,
+          };
+        });
+        // fan-triangulate in case of quads/ngons
+        for (let i = 1; i < refs.length - 1; i++) {
+          [refs[0], refs[i], refs[i + 1]].forEach(r => {
+            const p = v[r.v] || [0, 0, 0];
+            positions.push(p[0], p[1], p[2]);
+            const n = r.vn >= 0 ? vn[r.vn] : [0, 1, 0];
+            normals.push(n[0], n[1], n[2]);
+            const uv = r.vt >= 0 ? vt[r.vt] : [0, 0];
+            uvs.push(uv[0], uv[1]);
+            colors.push(colorRgb[0], colorRgb[1], colorRgb[2]);
+          });
+        }
+      }
+    }
+    return {
+      positions: new Float32Array(positions),
+      normals: new Float32Array(normals),
+      colors: new Float32Array(colors),
+      uvs: new Float32Array(uvs),
+      rawVerts: v,
     };
   }
 
@@ -175,5 +235,5 @@
     return { positions, colors };
   }
 
-  window.G.geo = { icosahedron, box, cone, cylinder, groundDisc, skyQuad, hexToRgb };
+  window.G.geo = { icosahedron, box, cone, cylinder, groundDisc, skyQuad, parseOBJ, hexToRgb };
 })();

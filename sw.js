@@ -1,4 +1,4 @@
-const CACHE_NAME = 'ueberheld-cache-v2';
+const CACHE_NAME = 'ueberheld-cache-v3';
 const ASSETS = [
   './',
   './index.html',
@@ -10,6 +10,9 @@ const ASSETS = [
   './ui.js',
   './manifest.json',
   './icon.svg',
+  './assets/tree.obj',
+  './assets/glow.png',
+  './assets/ground_arcane.jpg',
 ];
 
 self.addEventListener('install', event => {

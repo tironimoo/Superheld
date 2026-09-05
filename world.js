@@ -9,6 +9,7 @@
     attribute vec3 aPosition;
     attribute vec3 aNormal;
     attribute vec3 aColor;
+    attribute vec2 aUV;
     uniform mat4 uModel;
     uniform mat4 uViewProj;
     uniform vec3 uCameraPos;
@@ -16,12 +17,14 @@
     uniform float uFogFar;
     varying vec3 vColor;
     varying vec3 vNormal;
+    varying vec2 vUV;
     varying float vFog;
     void main() {
       vec4 worldPos = uModel * vec4(aPosition, 1.0);
       gl_Position = uViewProj * worldPos;
       vNormal = mat3(uModel) * aNormal;
       vColor = aColor;
+      vUV = aUV;
       float dist = distance(worldPos.xyz, uCameraPos);
       vFog = clamp((dist - uFogNear) / (uFogFar - uFogNear), 0.0, 1.0);
     }
@@ -30,15 +33,23 @@
     precision mediump float;
     varying vec3 vColor;
     varying vec3 vNormal;
+    varying vec2 vUV;
     varying float vFog;
     uniform vec3 uLightDir;
     uniform vec3 uFogColor;
     uniform float uEmissive;
+    uniform float uUseTexture;
+    uniform sampler2D uTexture;
     void main() {
       vec3 n = normalize(vNormal);
       float diff = max(dot(n, uLightDir), 0.0);
-      vec3 lit = vColor * (0.5 + 0.55 * diff);
-      vec3 finalColor = mix(lit, vColor * 1.25, uEmissive);
+      vec3 base = vColor;
+      if (uUseTexture > 0.5) {
+        vec3 tex = texture2D(uTexture, vUV).rgb;
+        base = vColor * tex * 1.7;
+      }
+      vec3 lit = base * (0.5 + 0.55 * diff);
+      vec3 finalColor = mix(lit, base * 1.25, uEmissive);
       finalColor = mix(finalColor, uFogColor, vFog);
       gl_FragColor = vec4(finalColor, 1.0);
     }
@@ -53,6 +64,30 @@
     precision mediump float;
     varying vec3 vColor;
     void main() { gl_FragColor = vec4(vColor, 1.0); }
+  `;
+  const SPRITE_VERT = `
+    attribute vec3 aPosition;
+    attribute vec2 aUV;
+    attribute vec4 aColor;
+    uniform mat4 uViewProj;
+    varying vec2 vUV;
+    varying vec4 vColor;
+    void main() {
+      vUV = aUV;
+      vColor = aColor;
+      gl_Position = uViewProj * vec4(aPosition, 1.0);
+    }
+  `;
+  const SPRITE_FRAG = `
+    precision mediump float;
+    varying vec2 vUV;
+    varying vec4 vColor;
+    uniform sampler2D uTexture;
+    void main() {
+      vec4 tex = texture2D(uTexture, vUV);
+      float a = tex.a * vColor.a;
+      gl_FragColor = vec4(vColor.rgb * tex.rgb, a);
+    }
   `;
 
   function compileShader(gl, type, src) {
@@ -77,11 +112,38 @@
     return prog;
   }
 
+  function loadTexture(gl, url, repeat) {
+    const tex = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, tex);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array([190, 175, 210, 255]));
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = () => {
+      gl.bindTexture(gl.TEXTURE_2D, tex);
+      gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, img);
+      if (repeat) {
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.REPEAT);
+        gl.generateMipmap(gl.TEXTURE_2D);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
+      } else {
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+      }
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    };
+    img.src = url;
+    return tex;
+  }
+
   class Mesh {
     constructor(gl, data) {
       this.gl = gl;
       this.count = data.indices ? data.indices.length : data.positions.length / 3;
       this.hasIndex = !!data.indices;
+      this.texture = null;
       this.posBuf = gl.createBuffer();
       gl.bindBuffer(gl.ARRAY_BUFFER, this.posBuf);
       gl.bufferData(gl.ARRAY_BUFFER, data.positions, gl.STATIC_DRAW);
@@ -91,6 +153,9 @@
       this.colBuf = gl.createBuffer();
       gl.bindBuffer(gl.ARRAY_BUFFER, this.colBuf);
       gl.bufferData(gl.ARRAY_BUFFER, data.colors, gl.STATIC_DRAW);
+      this.uvBuf = gl.createBuffer();
+      gl.bindBuffer(gl.ARRAY_BUFFER, this.uvBuf);
+      gl.bufferData(gl.ARRAY_BUFFER, data.uvs || new Float32Array((data.positions.length / 3) * 2), gl.STATIC_DRAW);
       if (this.hasIndex) {
         this.idxBuf = gl.createBuffer();
         gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, this.idxBuf);
@@ -104,6 +169,8 @@
       gl.vertexAttribPointer(attribs.aNormal, 3, gl.FLOAT, false, 0, 0);
       gl.bindBuffer(gl.ARRAY_BUFFER, this.colBuf);
       gl.vertexAttribPointer(attribs.aColor, 3, gl.FLOAT, false, 0, 0);
+      gl.bindBuffer(gl.ARRAY_BUFFER, this.uvBuf);
+      gl.vertexAttribPointer(attribs.aUV, 2, gl.FLOAT, false, 0, 0);
       if (this.hasIndex) {
         gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, this.idxBuf);
         gl.drawElements(gl.TRIANGLES, this.count, gl.UNSIGNED_SHORT, 0);
@@ -113,15 +180,61 @@
     }
   }
 
+  // Batches camera-facing (billboard) and ground-flat glow sprites into one
+  // dynamic draw call per blend mode, using a single soft-circle texture.
+  class SpriteBatch {
+    constructor(gl) {
+      this.gl = gl;
+      this.buf = gl.createBuffer();
+      this.verts = [];
+    }
+    reset() { this.verts.length = 0; }
+    pushQuad(p0, p1, p2, p3, uv, color, alpha) {
+      const corners = [p0, p1, p2, p0, p2, p3];
+      const uvs = [[0, 0], [1, 0], [1, 1], [0, 0], [1, 1], [0, 1]];
+      for (let i = 0; i < 6; i++) {
+        this.verts.push(corners[i][0], corners[i][1], corners[i][2], uvs[i][0], uvs[i][1], color[0], color[1], color[2], alpha);
+      }
+    }
+    billboard(center, size, right, up, color, alpha) {
+      const hw = V3.scale(right, size / 2), hu = V3.scale(up, size / 2);
+      const p0 = V3.sub(V3.sub(center, hw), hu);
+      const p1 = V3.sub(V3.add(center, hw), hu);
+      const p2 = V3.add(V3.add(center, hw), hu);
+      const p3 = V3.add(V3.sub(center, hw), hu);
+      this.pushQuad(p0, p1, p2, p3, null, color, alpha);
+    }
+    groundQuad(center, size, color, alpha) {
+      const h = size / 2;
+      const p0 = [center[0] - h, center[1], center[2] - h];
+      const p1 = [center[0] + h, center[1], center[2] - h];
+      const p2 = [center[0] + h, center[1], center[2] + h];
+      const p3 = [center[0] - h, center[1], center[2] + h];
+      this.pushQuad(p0, p1, p2, p3, null, color, alpha);
+    }
+    flush(gl, attribs) {
+      if (!this.verts.length) return;
+      const arr = new Float32Array(this.verts);
+      gl.bindBuffer(gl.ARRAY_BUFFER, this.buf);
+      gl.bufferData(gl.ARRAY_BUFFER, arr, gl.DYNAMIC_DRAW);
+      const stride = 9 * 4;
+      gl.vertexAttribPointer(attribs.aPosition, 3, gl.FLOAT, false, stride, 0);
+      gl.vertexAttribPointer(attribs.aUV, 2, gl.FLOAT, false, stride, 12);
+      gl.vertexAttribPointer(attribs.aColor, 4, gl.FLOAT, false, stride, 20);
+      gl.drawArrays(gl.TRIANGLES, 0, this.verts.length / 9);
+    }
+  }
+
   const SKY_TOP = '#2a1458';
   const SKY_BOTTOM = '#ff9d5c';
   const FOG_COLOR = geo.hexToRgb('#5b3a8f');
+  const BLOSSOM_COLORS = [[1, 0.7, 0.9], [0.8, 0.7, 1], [1, 0.85, 0.6]];
 
   const World = {
-    canvas: null, gl: null, prog: null, skyProg: null,
-    attribs: {}, uniforms: {}, skyAttribs: {}, skyUniforms: {},
+    canvas: null, gl: null, prog: null, skyProg: null, spriteProg: null,
+    attribs: {}, uniforms: {}, skyAttribs: {}, spriteAttribs: {}, spriteUniforms: {},
     meshes: {}, decor: [], monsters: [], stars: [], projectiles: [], particles: [],
-    player: { pos: [0, 1.6, 8], yaw: Math.PI, pitch: 0 },
+    player: { pos: [0.3, 1.6, 6.4], yaw: Math.PI, pitch: 0 },
     running: false, paused: false, lastT: 0,
     move: { x: 0, z: 0 },
     look: { active: false, pointerId: null, lastX: 0, lastY: 0 },
@@ -129,6 +242,7 @@
     castCooldown: 0,
     worldRadius: 40,
     bobPhase: 0,
+    treeReady: false,
 
     init(canvas) {
       this.canvas = canvas;
@@ -145,6 +259,7 @@
         aPosition: gl.getAttribLocation(this.prog, 'aPosition'),
         aNormal: gl.getAttribLocation(this.prog, 'aNormal'),
         aColor: gl.getAttribLocation(this.prog, 'aColor'),
+        aUV: gl.getAttribLocation(this.prog, 'aUV'),
       };
       this.uniforms = {
         uModel: gl.getUniformLocation(this.prog, 'uModel'),
@@ -155,6 +270,8 @@
         uLightDir: gl.getUniformLocation(this.prog, 'uLightDir'),
         uFogColor: gl.getUniformLocation(this.prog, 'uFogColor'),
         uEmissive: gl.getUniformLocation(this.prog, 'uEmissive'),
+        uUseTexture: gl.getUniformLocation(this.prog, 'uUseTexture'),
+        uTexture: gl.getUniformLocation(this.prog, 'uTexture'),
       };
 
       this.skyProg = linkProgram(gl, SKY_VERT, SKY_FRAG);
@@ -170,8 +287,25 @@
       gl.bindBuffer(gl.ARRAY_BUFFER, this.skyColBuf);
       gl.bufferData(gl.ARRAY_BUFFER, skyData.colors, gl.STATIC_DRAW);
 
+      this.spriteProg = linkProgram(gl, SPRITE_VERT, SPRITE_FRAG);
+      this.spriteAttribs = {
+        aPosition: gl.getAttribLocation(this.spriteProg, 'aPosition'),
+        aUV: gl.getAttribLocation(this.spriteProg, 'aUV'),
+        aColor: gl.getAttribLocation(this.spriteProg, 'aColor'),
+      };
+      this.spriteUniforms = {
+        uViewProj: gl.getUniformLocation(this.spriteProg, 'uViewProj'),
+        uTexture: gl.getUniformLocation(this.spriteProg, 'uTexture'),
+      };
+      this.glowTex = loadTexture(gl, 'assets/glow.png', false);
+      this.glowBatch = new SpriteBatch(gl);
+      this.shadowBatch = new SpriteBatch(gl);
+
+      this.groundTex = loadTexture(gl, 'assets/ground_arcane.jpg', true);
+
       this.buildMeshes();
       this.buildDecor();
+      this.loadTreeModel();
       for (let i = 0; i < 5; i++) this.spawnMonster(0);
       for (let i = 0; i < 6; i++) this.spawnStar(0);
       this.setupInput();
@@ -179,9 +313,35 @@
       return true;
     },
 
+    loadTreeModel() {
+      fetch('assets/tree.obj').then(r => r.text()).then(text => {
+        const gl = this.gl;
+        const data = geo.parseOBJ(text, geo.hexToRgb('#4a3050'));
+        this.meshes.treeReal = new Mesh(gl, data);
+        // pick a spread of high branch-tip vertices as magic blossom spawn points
+        const verts = data.rawVerts.slice().sort((a, b) => b[1] - a[1]);
+        const picked = [];
+        for (let i = 0; i < verts.length && picked.length < 7; i += 11) picked.push(verts[i]);
+        this.treeBlossomLocalPoints = picked;
+        this.treeReady = true;
+        this.decor.forEach(d => {
+          if (d.kind === 'tree') d.blossoms = picked.map(p => this.transformPoint(p, d));
+        });
+      }).catch(() => {});
+    },
+
+    transformPoint(local, d) {
+      const s = d.scale * 3.2;
+      const c = Math.cos(d.rotY), sn = Math.sin(d.rotY);
+      const x = local[0] * c + local[2] * sn;
+      const z = -local[0] * sn + local[2] * c;
+      return [d.pos[0] + x * s, d.pos[1] + local[1] * s, d.pos[2] + z * s];
+    },
+
     buildMeshes() {
       const gl = this.gl;
-      this.meshes.ground = new Mesh(gl, geo.groundDisc(this.worldRadius, 40, 5, '#3a2470', '#150a2e'));
+      this.meshes.ground = new Mesh(gl, geo.groundDisc(this.worldRadius, 40, 5, '#4a3480', '#1c0f38', 0.12));
+      this.meshes.ground.texture = this.groundTex;
       this.meshes.monster = {
         green: new Mesh(gl, geo.icosahedron(1, '#57d68d', true)),
         blue: new Mesh(gl, geo.icosahedron(1, '#4fc3f7', true)),
@@ -193,8 +353,6 @@
       this.meshes.star = new Mesh(gl, geo.icosahedron(0.5, '#ffd76a', true));
       this.meshes.crystal = new Mesh(gl, geo.cone(0.6, 1.8, 6, '#9d7bff', true));
       this.meshes.crystalBase = new Mesh(gl, geo.box(0.7, 0.4, 0.7, '#5b3a8f', true));
-      this.meshes.treeTop = new Mesh(gl, geo.cone(1.3, 2.4, 8, '#3aa66b', true));
-      this.meshes.treeTrunk = new Mesh(gl, geo.cylinder(0.25, 1.4, 6, '#6b4a2f', true));
       this.meshes.rock = new Mesh(gl, geo.box(1, 0.8, 1, '#5c5470', true));
       this.meshes.projectile = {};
       this.meshes.particle = {};
@@ -350,7 +508,6 @@
         Math.sin(pitch),
         -Math.cos(yaw) * Math.cos(pitch),
       ];
-      // soft auto-aim: lock onto nearest living monster within a forward cone
       let target = null, bestDot = 0.82;
       this.monsters.forEach(m => {
         if (!m.alive) return;
@@ -400,10 +557,10 @@
     },
 
     spawnKillBurst(pos, colorKey) {
-      for (let i = 0; i < 8; i++) {
+      for (let i = 0; i < 10; i++) {
         const a = Math.random() * Math.PI * 2;
         const el = Math.random() * Math.PI - Math.PI / 2;
-        const speed = 2 + Math.random() * 2;
+        const speed = 2 + Math.random() * 2.5;
         this.particles.push({
           pos: [...pos],
           vel: [Math.cos(a) * Math.cos(el) * speed, Math.sin(el) * speed + 1.5, Math.sin(a) * Math.cos(el) * speed],
@@ -480,6 +637,14 @@
       const gl = this.gl;
       gl.uniformMatrix4fv(this.uniforms.uModel, false, model);
       gl.uniform1f(this.uniforms.uEmissive, emissive || 0);
+      if (mesh.texture) {
+        gl.activeTexture(gl.TEXTURE0);
+        gl.bindTexture(gl.TEXTURE_2D, mesh.texture);
+        gl.uniform1i(this.uniforms.uTexture, 0);
+        gl.uniform1f(this.uniforms.uUseTexture, 1);
+      } else {
+        gl.uniform1f(this.uniforms.uUseTexture, 0);
+      }
       mesh.draw(gl, this.attribs);
     },
 
@@ -496,33 +661,47 @@
       gl.drawArrays(gl.TRIANGLES, 0, 6);
       gl.enable(gl.DEPTH_TEST);
 
-      const gl2 = gl;
-      gl2.clear(gl2.DEPTH_BUFFER_BIT);
-      gl2.useProgram(this.prog);
-      gl2.enableVertexAttribArray(this.attribs.aPosition);
-      gl2.enableVertexAttribArray(this.attribs.aNormal);
-      gl2.enableVertexAttribArray(this.attribs.aColor);
+      gl.clear(gl.DEPTH_BUFFER_BIT);
+      gl.useProgram(this.prog);
+      gl.enableVertexAttribArray(this.attribs.aPosition);
+      gl.enableVertexAttribArray(this.attribs.aNormal);
+      gl.enableVertexAttribArray(this.attribs.aColor);
+      gl.enableVertexAttribArray(this.attribs.aUV);
 
       const aspect = this.canvas.width / this.canvas.height;
       const proj = M4.perspective(Math.PI / 2.6, aspect, 0.1, 90);
       const view = M4.viewMatrix(this.player.pos, this.player.yaw, this.player.pitch);
       const viewProj = M4.multiply(proj, view);
-      gl2.uniformMatrix4fv(this.uniforms.uViewProj, false, viewProj);
-      gl2.uniform3fv(this.uniforms.uCameraPos, this.player.pos);
-      gl2.uniform1f(this.uniforms.uFogNear, 18);
-      gl2.uniform1f(this.uniforms.uFogFar, this.worldRadius + 4);
-      gl2.uniform3fv(this.uniforms.uLightDir, V3.normalize([0.4, 0.85, 0.3]));
-      gl2.uniform3fv(this.uniforms.uFogColor, FOG_COLOR);
+      gl.uniformMatrix4fv(this.uniforms.uViewProj, false, viewProj);
+      gl.uniform3fv(this.uniforms.uCameraPos, this.player.pos);
+      gl.uniform1f(this.uniforms.uFogNear, 18);
+      gl.uniform1f(this.uniforms.uFogFar, this.worldRadius + 4);
+      gl.uniform3fv(this.uniforms.uLightDir, V3.normalize([0.4, 0.85, 0.3]));
+      gl.uniform3fv(this.uniforms.uFogColor, FOG_COLOR);
 
       this.drawMesh(this.meshes.ground, M4.identity(), 0.05);
 
+      this.glowBatch.reset();
+      this.shadowBatch.reset();
+      const camRight = [Math.cos(this.player.yaw), 0, -Math.sin(this.player.yaw)];
+      const worldUp = [0, 1, 0];
+
       this.decor.forEach(d => {
+        this.shadowBatch.groundQuad([d.pos[0], 0.03, d.pos[2]], d.scale * 1.7, [0, 0, 0], 0.35);
         if (d.kind === 'crystal') {
           this.drawMesh(this.meshes.crystalBase, M4.compose(d.pos, d.rotY, [d.scale, d.scale, d.scale]), 0.1);
           this.drawMesh(this.meshes.crystal, M4.compose([d.pos[0], d.pos[1] + 0.4 * d.scale, d.pos[2]], d.rotY, [d.scale, d.scale, d.scale]), 0.35);
+          this.glowBatch.billboard([d.pos[0], d.pos[1] + 1.1 * d.scale, d.pos[2]], 1.4 * d.scale, camRight, worldUp, [0.7, 0.5, 1], 0.35);
         } else if (d.kind === 'tree') {
-          this.drawMesh(this.meshes.treeTrunk, M4.compose(d.pos, d.rotY, [d.scale, d.scale, d.scale]), 0);
-          this.drawMesh(this.meshes.treeTop, M4.compose([d.pos[0], d.pos[1] + 1.3 * d.scale, d.pos[2]], d.rotY, [d.scale, d.scale, d.scale]), 0);
+          if (this.meshes.treeReal) {
+            this.drawMesh(this.meshes.treeReal, M4.compose(d.pos, d.rotY, [d.scale * 3.2, d.scale * 3.2, d.scale * 3.2]), 0);
+            if (d.blossoms) {
+              d.blossoms.forEach((b, i) => {
+                const c = BLOSSOM_COLORS[i % BLOSSOM_COLORS.length];
+                this.glowBatch.billboard(b, 0.55, camRight, worldUp, c, 0.8);
+              });
+            }
+          }
         } else {
           this.drawMesh(this.meshes.rock, M4.compose(d.pos, d.rotY, [d.scale, d.scale * 0.8, d.scale]), 0);
         }
@@ -532,6 +711,7 @@
         if (!m.alive) return;
         const bob = Math.sin(m.phase) * 0.15;
         const pos = [m.pos[0], 0.9 + bob, m.pos[2]];
+        this.shadowBatch.groundQuad([m.pos[0], 0.03, m.pos[2]], 1.6, [0, 0, 0], 0.4);
         this.drawMesh(this.meshes.monster[m.colorKey], M4.compose(pos, m.phase * 0.3, [0.85, 0.85, 0.85]), 0.25);
         const eyeYaw = m.phase * 0.3;
         const fwd = [Math.sin(eyeYaw) * 0.55, 0.15, Math.cos(eyeYaw) * 0.55];
@@ -546,16 +726,43 @@
         const bob = Math.sin(s.phase) * 0.2;
         const pos = [s.pos[0], 1.1 + bob, s.pos[2]];
         this.drawMesh(this.meshes.star, M4.compose(pos, s.phase * 1.5, [0.7, 0.7, 0.7]), 0.7);
+        this.glowBatch.billboard(pos, 1.6 + Math.sin(s.phase * 2) * 0.15, camRight, worldUp, [1, 0.9, 0.5], 0.55);
       });
 
       this.projectiles.forEach(pr => {
         this.drawMesh(this.meshes.projectile[pr.powerId], M4.translation(pr.pos[0], pr.pos[1], pr.pos[2]), 0.85);
+        const c = geo.hexToRgb(ST.POWERS.find(p => p.id === pr.powerId).color);
+        this.glowBatch.billboard(pr.pos, 1.1, camRight, worldUp, c, 0.7);
       });
 
       this.particles.forEach(pa => {
         const s = Math.max(0.05, pa.life / pa.maxLife);
         this.drawMesh(this.meshes.particle[activeParticlePower(pa.colorKey)] || this.meshes.star, M4.compose(pa.pos, 0, [s, s, s]), 0.8);
+        const c = geo.hexToRgb(ST.POWERS.find(p => p.id === activeParticlePower(pa.colorKey)).color);
+        this.glowBatch.billboard(pa.pos, 0.7 * s + 0.15, camRight, worldUp, c, 0.6 * s);
       });
+
+      // sprite passes: shadows (normal alpha, on the ground) then glows (additive, on top)
+      gl.useProgram(this.spriteProg);
+      gl.enableVertexAttribArray(this.spriteAttribs.aPosition);
+      gl.enableVertexAttribArray(this.spriteAttribs.aUV);
+      gl.enableVertexAttribArray(this.spriteAttribs.aColor);
+      gl.uniformMatrix4fv(this.spriteUniforms.uViewProj, false, viewProj);
+      gl.activeTexture(gl.TEXTURE0);
+      gl.bindTexture(gl.TEXTURE_2D, this.glowTex);
+      gl.uniform1i(this.spriteUniforms.uTexture, 0);
+
+      gl.enable(gl.BLEND);
+      gl.depthMask(false);
+
+      gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+      this.shadowBatch.flush(gl, this.spriteAttribs);
+
+      gl.blendFunc(gl.SRC_ALPHA, gl.ONE);
+      this.glowBatch.flush(gl, this.spriteAttribs);
+
+      gl.depthMask(true);
+      gl.disable(gl.BLEND);
     },
 
     loop(t) {

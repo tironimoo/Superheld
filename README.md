@@ -11,9 +11,13 @@ Ein Ego-Perspektive-Rollenspiel für Kinder: Erschaffe deinen eigenen Helden und
 - 👑 Aufsteigendes Rangsystem (Anfänger → Kraftpaket → Held → Superheld → Meisterheld → ÜBERHELD)
 - 🏆 Sammelbare Erfolge
 - 🎯 Sehr einfacher Schwierigkeitsgrad: großzügiges Ziel-Lock-on, keine Verlierbedingung, ständige kleine Belohnungen
-- 🎨 Fantasievolles, WoW-inspiriertes Low-Poly-Design mit Glow-Effekten, Nebel und Konfetti – gerendert mit eigenem, leichtgewichtigem WebGL (keine externen Abhängigkeiten nötig)
+- 🎨 Fantasievolles, WoW-inspiriertes Low-Poly-Design mit echten Texturen (Steinboden), einem echten 3D-Baummodell mit magischen Glow-Blüten, leuchtenden Glow-Sprites, Nebel und Konfetti – gerendert mit eigenem, leichtgewichtigem WebGL (keine externen Laufzeit-Abhängigkeiten nötig)
 - 📱 Vollständig touch-optimiert für Handy und Tablet, als installierbare Web-App (PWA), auch offline spielbar
 - 💾 Fortschritt wird automatisch lokal gespeichert
+
+## Grafik-Assets
+
+Die Bodentextur, das Baummodell (`assets/tree.obj`) und die Glow-Sprite-Textur (`assets/glow.png`) stammen aus dem quelloffenen [three.js](https://github.com/mrdoob/three.js)-Projekt (MIT-Lizenz, `examples/`-Ordner) und wurden lokal eingebunden. Alle übrige Grafik (Kristalle, Wichte, Sterne, Held-Icons, Boden-Formgebung) ist prozedural in `geometry.js` erzeugt.
 
 ## Starten
 
