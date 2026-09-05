@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Painting the launch window in the game's own night purple avoids the
+         white flash between tapping the icon and the WebView drawing. -->
+    <style name="AppTheme" parent="@android:style/Theme.DeviceDefault.NoActionBar.Fullscreen">
+        <item name="android:windowBackground">@color/ueberheld_night</item>
+        <item name="android:navigationBarColor">@color/ueberheld_night</item>
+        <item name="android:statusBarColor">@color/ueberheld_night</item>
+    </style>
+</resources>

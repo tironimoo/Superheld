@@ -1,0 +1,45 @@
+plugins {
+    id 'com.android.application'
+}
+
+// Signing material is passed in from CI secrets. Without it the build falls back
+// to the debug key so a working APK still comes out, but that key is regenerated
+// per machine — set the secrets if you want updates to install over the top.
+def keystorePath = System.getenv("ANDROID_KEYSTORE_FILE")
+def hasReleaseKey = keystorePath != null && !keystorePath.isEmpty() && file(keystorePath).exists()
+
+android {
+    namespace 'io.github.tironimoo.ueberheld'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId "io.github.tironimoo.ueberheld"
+        minSdk 24
+        targetSdk 34
+        versionCode (System.getenv("VERSION_CODE") ?: "1") as Integer
+        versionName System.getenv("VERSION_NAME") ?: "1.0"
+    }
+
+    signingConfigs {
+        release {
+            if (hasReleaseKey) {
+                storeFile file(keystorePath)
+                storePassword System.getenv("ANDROID_KEYSTORE_PASSWORD")
+                keyAlias System.getenv("ANDROID_KEY_ALIAS")
+                keyPassword System.getenv("ANDROID_KEY_PASSWORD")
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            signingConfig hasReleaseKey ? signingConfigs.release : signingConfigs.debug
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}
