@@ -145,6 +145,7 @@
     success: () => { tone(523, 0.15, 'triangle'); tone(659, 0.15, 'triangle', 0.15, 0.1); tone(784, 0.25, 'triangle', 0.15, 0.2); },
     levelup: () => { tone(392, 0.15, 'sawtooth', 0.12); tone(523, 0.15, 'sawtooth', 0.12, 0.12); tone(659, 0.15, 'sawtooth', 0.12, 0.24); tone(880, 0.35, 'sawtooth', 0.15, 0.36); },
     miss: () => tone(200, 0.1, 'sine', 0.08),
+    land: () => tone(130, 0.11, 'sine', 0.09),
   };
 
   window.G.state = {

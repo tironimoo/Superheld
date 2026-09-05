@@ -96,6 +96,8 @@
       el.classList.toggle('heart-lost', i >= hp);
       el.textContent = i >= hp ? '🖤' : '❤️';
     });
+    const vig = $('#vignette');
+    if (vig) vig.classList.toggle('critical', hp > 0 && hp <= 1);
     if (hit) {
       const flash = $('#damage-flash');
       flash.classList.add('active');
@@ -420,6 +422,23 @@
       ST.save();
     });
     $('#btn-sound').textContent = state.soundOn ? '🔊 Ton an' : '🔇 Ton aus';
+
+    $('#btn-restart').addEventListener('click', () => {
+      showOverlay(`
+        <div class="overlay-emoji">🆕</div>
+        <h2>Wirklich neu anfangen?</h2>
+        <p>Dein Held, alle <strong>Sterne</strong>, <strong>Kräfte</strong> und <strong>Erfolge</strong> gehen dabei verloren.<br>Das kann man nicht rückgängig machen.</p>
+        <button class="btn btn-primary btn-big overlay-close">Nein, weiterspielen</button>
+        <button id="btn-restart-confirm" class="btn btn-danger btn-big">Ja, alles löschen</button>
+      `);
+      const confirmBtn = $('#btn-restart-confirm');
+      if (confirmBtn) confirmBtn.addEventListener('click', () => {
+        try { localStorage.removeItem(ST.STORAGE_KEY); } catch (e) { /* storage unavailable */ }
+        // A full reload is the only way to guarantee the 3D world, quest and
+        // spawn state start genuinely empty rather than half-reset.
+        location.reload();
+      });
+    });
 
     $('#btn-reset').addEventListener('click', async () => {
       if (!confirm('Spiel neu laden und auf die neueste Version aktualisieren? Dein Fortschritt bleibt erhalten.')) return;

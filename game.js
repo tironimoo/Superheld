@@ -124,6 +124,7 @@ const HAND_ANIMS = {
 const CRYSTAL_BURST = { count: 10, speed: [2, 4], colors: [0x9d7bff, 0xffffff, 0xb385ff], gravity: 2, spreadUp: 0.5 };
 const TREASURE_BURST = { count: 26, speed: [3, 7], colors: [0xffd76a, 0xffb02e, 0xffffff, 0xff6b35], gravity: 5, spreadUp: 0.7 };
 const GUARD_TYPE_IDS = ['riesenwicht', 'steinling', 'traumgeist', 'schatten'];
+const STAR_MAGNET_RADIUS = 4.5;
 
 // Deterministic-but-persistent treasure location: derived from a per-hero
 // random seed (stored in the save) and the current quest level, so it's
@@ -148,10 +149,10 @@ const World = {
   joy: { active: false, pointerId: null, cx: 0, cy: 0 },
   castCooldown: 0, charging: false, chargeStart: 0,
   vy: 0, grounded: true, jumpOffset: 0, jumpRequested: false,
-  bobPhase: 0,
+  bobPhase: 0, landDip: 0,
   health: MAX_HEALTH, lastHitAt: 0, lastRegenAt: 0, invulnUntil: 0, damageBoostUntil: 0,
   treeReady: false, pendingTrees: [], foxTemplate: null, foxClips: null,
-  shakeTime: 0, shakeMag: 0,
+  shakeTime: 0, shakeMag: 0, shakeDur: 0.25,
   _lastChunkX: null, _lastChunkZ: null,
   chunkQueue: [], _chunkQueueSet: new Set(),
   _particlePool: [], _maxParticles: 220,
@@ -192,12 +193,13 @@ const World = {
     this.composer = composer;
     this.bloom = bloom;
 
+    // Loaded before buildSky so the sky can reuse the cloud texture.
+    this.loadPowerTextures();
     this.buildSky();
     this.buildLights();
     this.buildTerrainMaterial();
     this.buildWater();
     this.buildDecorTemplates();
-    this.loadPowerTextures();
     this.buildProjectileGeometries();
     this.buildChargeOrb();
     this.loadTreeModel();
@@ -526,6 +528,38 @@ const World = {
     const moon = this.makeGlowSprite(0xffe0c2, 9, 1);
     moon.position.set(-22, 16, -58);
     skyGroup.add(moon);
+
+    // A dusk sky with nothing in it reads as flat colour. A field of stars
+    // gives it a ceiling for one extra draw call. (Drifting cloud sprites were
+    // tried here too and dropped: at sky scale the texture's square edge was
+    // visible and its core blew out under bloom.)
+    const starCount = 240;
+    const starPos = new Float32Array(starCount * 3);
+    for (let i = 0; i < starCount; i++) {
+      // Spread over the upper dome only, kept off the horizon where the
+      // terrain and fog would swallow them anyway.
+      const theta = Math.random() * Math.PI * 2;
+      const y = 0.18 + Math.random() * 0.8;
+      const r = Math.sqrt(Math.max(0, 1 - y * y));
+      starPos[i * 3] = Math.cos(theta) * r * 88;
+      starPos[i * 3 + 1] = y * 76 + 4;
+      starPos[i * 3 + 2] = Math.sin(theta) * r * 88;
+    }
+    const starGeo = new THREE.BufferGeometry();
+    starGeo.setAttribute('position', new THREE.BufferAttribute(starPos, 3));
+    const starMat = new THREE.PointsMaterial({
+      // Without a map, points rasterise as hard squares — the round sprite
+      // texture is what makes them read as stars rather than grey pixels.
+      map: this.powerTex && this.powerTex.circle,
+      color: 0xfff4d6, size: 0.55, sizeAttenuation: true,
+      transparent: true, opacity: 0.85, depthWrite: false, fog: false,
+      blending: THREE.AdditiveBlending,
+    });
+    const starField = new THREE.Points(starGeo, starMat);
+    starField.renderOrder = -9;
+    skyGroup.add(starField);
+    this.starField = starField;
+
     this.scene.add(skyGroup);
     this.skyGroup = skyGroup;
   },
@@ -1255,6 +1289,8 @@ const World = {
     const level = state.powerLevels[powerId];
     this.castCooldown = performance.now() + (mega ? 500 + chargeFrac * 500 : Math.max(280, 380 - (level - 1) * 25));
     ST.sfx.cast();
+    // A touch of recoil so casting pushes back instead of just emitting.
+    this.addShake(0.1, mega ? 0.10 + chargeFrac * 0.06 : 0.045);
     this.handAnim = { powerId, start: performance.now() };
     const yaw = this.player.yaw, pitch = this.player.pitch;
     const dir = new THREE.Vector3(
@@ -1297,7 +1333,7 @@ const World = {
     window.G.ui.toast(m.isBoss ? `👹 Endgegner besiegt! +${reward} ⭐` : `+${reward} ⭐`);
     window.G.ui.updateHud();
     this.spawnKillBurst(m.pos, visual);
-    if (visual.shake) { this.shakeTime = 0.25; this.shakeMag = visual.shake; }
+    if (visual.shake) this.addShake(0.25, visual.shake);
     const newAch = ST.checkAchievements();
     if (newAch.length) window.G.ui.queueAchievements(newAch);
     m.alive = false;
@@ -1379,6 +1415,15 @@ const World = {
     if (pr.powerId === 'flug') m.statusDrift = { x: (Math.random() - 0.5) * 3, z: (Math.random() - 0.5) * 3 };
     this.applyStatus(m, pr.powerId, lethal, duration);
     ST.sfx.hit();
+    // Non-lethal hits previously only swapped the status glow, so chipping a
+    // tough enemy down felt like nothing was landing. A small spray in the
+    // power's own colours confirms every connect.
+    if (!lethal && pr.visual && pr.visual.burst) {
+      this.spawnKillBurst(m.pos, {
+        burst: Object.assign({}, pr.visual.burst, { count: 5, speed: [1.4, 2.8] }),
+        tex: pr.visual.tex,
+      });
+    }
     if (m.type.weak === pr.powerId) window.G.ui.toast('💥 Schwachpunkt getroffen!');
   },
 
@@ -1443,12 +1488,45 @@ const World = {
     }
   },
 
+  // shakeMag used to be left at its last value forever, so every later shake
+  // inherited the strongest one ever triggered. Routing all of them through
+  // here keeps the magnitude tied to the shake that is actually running.
+  addShake(duration, magnitude) {
+    if (magnitude >= this.shakeMag || this.shakeTime <= 0) {
+      this.shakeMag = magnitude;
+      this.shakeDur = duration;
+      this.shakeTime = duration;
+    }
+  },
+
+  onLanded(impact, pos) {
+    const strength = Math.min(1, (impact - 2.5) / 6);
+    this.landDip = 0.10 + strength * 0.16;
+    ST.sfx.land();
+    // Dust kicks outward along the ground rather than upward, so it reads as
+    // scuffed earth instead of another magic burst.
+    const count = 4 + Math.round(strength * 4);
+    for (let i = 0; i < count; i++) {
+      if (this.particles.length >= this._maxParticles) break;
+      const a = Math.random() * Math.PI * 2;
+      const speed = 1.2 + Math.random() * 1.8 * (0.5 + strength);
+      const sprite = this.acquireSprite(0xcbb9a0, 0.42, 0.5);
+      sprite.position.set(pos.x, pos.y - 1.5, pos.z);
+      this.particles.push({
+        obj: sprite,
+        vel: new THREE.Vector3(Math.cos(a) * speed, 0.5 + Math.random() * 0.5, Math.sin(a) * speed),
+        life: 0.45, maxLife: 0.45, grav: 1.6,
+      });
+    }
+  },
+
   takeDamage(now) {
     if (now < this.invulnUntil) return;
     this.health = Math.max(0, this.health - 1);
     this.lastHitAt = now;
     this.invulnUntil = now + 1000;
     ST.sfx.miss();
+    this.addShake(0.3, 0.18);
     window.G.ui.updateHealth(this.health, MAX_HEALTH, true);
     if (this.health <= 0) {
       this.health = MAX_HEALTH;
@@ -1581,14 +1659,25 @@ const World = {
     this.jumpRequested = false;
     this.vy -= GRAVITY * dt;
     this.jumpOffset += this.vy * dt;
-    if (this.jumpOffset <= 0) { this.jumpOffset = 0; this.vy = 0; this.grounded = true; }
+    if (this.jumpOffset <= 0) {
+      // Landing used to be instant and silent, which made jumping feel
+      // weightless. Catch the touchdown frame and answer it with a knee-bend
+      // dip, a puff of dust and a thud scaled to how hard you came down.
+      const impact = -this.vy;
+      this.jumpOffset = 0;
+      this.vy = 0;
+      if (!this.grounded && impact > 2.5) this.onLanded(impact, p.pos);
+      this.grounded = true;
+    }
+    if (this.landDip > 0) this.landDip = Math.max(0, this.landDip - dt * 1.4);
 
     const groundY = this.heightAt(p.pos.x, p.pos.z);
-    p.pos.y = groundY + 1.6 + this.jumpOffset + (this.grounded ? Math.sin(this.bobPhase) * 0.04 : 0);
+    p.pos.y = groundY + 1.6 + this.jumpOffset + (this.grounded ? Math.sin(this.bobPhase) * 0.04 : 0) - this.landDip;
 
     this.updateChunks(false);
     this.processChunkQueue();
     if (this.skyGroup) this.skyGroup.position.set(p.pos.x, 0, p.pos.z);
+    if (this.starField) this.starField.material.opacity = 0.62 + Math.sin(this.clock.elapsedTime * 1.3) * 0.18;
     if (this.water) { this.water.position.x = p.pos.x; this.water.position.z = p.pos.z; }
     if (this.sun) {
       this.sun.position.set(p.pos.x + 14, p.pos.y + 22, p.pos.z + 10);
@@ -1599,9 +1688,10 @@ const World = {
     this.camera.position.copy(p.pos);
     if (this.shakeTime > 0) {
       this.shakeTime -= dt;
-      const s = this.shakeMag * (this.shakeTime / 0.25);
+      const s = this.shakeMag * Math.max(0, this.shakeTime / (this.shakeDur || 0.25));
       this.camera.position.x += (Math.random() - 0.5) * s;
       this.camera.position.y += (Math.random() - 0.5) * s;
+      if (this.shakeTime <= 0) { this.shakeTime = 0; this.shakeMag = 0; }
     }
     this.camera.rotation.order = 'YXZ';
     this.camera.rotation.y = p.yaw;
@@ -1644,9 +1734,21 @@ const World = {
       if (!s.alive && now >= s.spawnAt) { s.alive = true; s.group.visible = true; }
       if (s.alive) {
         s.phase += dt * 2.4;
+        const dist = p.pos.distanceTo(s.pos);
+        // Stars drift toward you once you are close. Walking onto an exact
+        // spot is fiddly on a touch joystick, and the little swoop makes
+        // collecting read as a reward rather than a near miss.
+        if (dist < STAR_MAGNET_RADIUS && dist > 0.001) {
+          const pull = Math.min(1, (1 - dist / STAR_MAGNET_RADIUS) * dt * 7);
+          s.pos.x += (p.pos.x - s.pos.x) * pull;
+          s.pos.z += (p.pos.z - s.pos.z) * pull;
+          s.pos.y = this.heightAt(s.pos.x, s.pos.z);
+          s.group.position.x = s.pos.x;
+          s.group.position.z = s.pos.z;
+        }
         s.group.position.y = s.pos.y + 1.0 + Math.sin(s.phase) * 0.2;
         s.group.rotation.y = s.phase * 1.4;
-        if (p.pos.distanceTo(s.pos) < 2.1) this.onStarCollected(s);
+        if (dist < 2.1) this.onStarCollected(s);
       }
     });
 
@@ -1694,7 +1796,7 @@ const World = {
       this.monsters.forEach(m => {
         if (m.alive && !m.status && m.pos.distanceTo(pr.pos) < hitR && (pr.mega || !hit)) { this.hitMonster(m, pr); hit = true; }
       });
-      if (hit && pr.mega) { this.shakeTime = 0.3; this.shakeMag = Math.max(this.shakeMag || 0, 0.22); }
+      if (hit && pr.mega) this.addShake(0.3, 0.22);
       if (hit || pr.life <= 0) { this.scene.remove(pr.obj); this.projectiles.splice(i, 1); }
     }
 

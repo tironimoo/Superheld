@@ -66,6 +66,12 @@ den Repository-Secrets (`ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`,
 Debug-Schlüssel – das APK lässt sich installieren, aber spätere Updates nicht
 darüber legen.
 
+## Pause-Menü
+
+- **Spiel aktualisieren** – lädt die neueste Version (Service Worker + Cache leeren). Fortschritt bleibt.
+- **Neu anfangen** – löscht den Spielstand komplett und startet bei der Heldenerstellung. Braucht eine
+  Bestätigung, weil Held, Sterne, Kräfte und Erfolge dabei verloren gehen.
+
 ## Dateien
 
 - `index.html` – Struktur der App, lädt three.js per Import-Map
