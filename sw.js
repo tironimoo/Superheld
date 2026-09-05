@@ -1,4 +1,4 @@
-const CACHE_NAME = 'ueberheld-cache-v8';
+const CACHE_NAME = 'ueberheld-cache-v9';
 const ASSETS = [
   './',
   './index.html',
@@ -12,6 +12,13 @@ const ASSETS = [
   './assets/glow.png',
   './assets/ground_arcane.jpg',
   './assets/models/fox.glb',
+  './assets/models/Parrot.glb',
+  './assets/models/Flamingo.glb',
+  './assets/models/Horse.glb',
+  './assets/textures/spark1.png',
+  './assets/textures/circle.png',
+  './assets/textures/snowflake2.png',
+  './assets/textures/cloud.png',
   './vendor/three/three.module.min.js',
   './vendor/three/examples/jsm/loaders/GLTFLoader.js',
   './vendor/three/examples/jsm/loaders/OBJLoader.js',

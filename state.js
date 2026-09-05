@@ -5,11 +5,12 @@
   const STORAGE_KEY = 'ueberheld-save-v2';
 
   const SKINS = [
-    { id: 0, color: '#f6c294', emoji: '🦸‍♂️' },
-    { id: 1, color: '#c98a5e', emoji: '🦸‍♀️' },
-    { id: 2, color: '#8d5a3b', emoji: '🦸‍♂️' },
-    { id: 3, color: '#e8b4d8', emoji: '🦸‍♀️' },
-    { id: 4, color: '#9ad1f2', emoji: '🦸' },
+    { id: 0, name: 'Zauberer', color: '#7c4dff', emoji: '🧙‍♂️', handStyle: 'robe' },
+    { id: 1, name: 'Hexe', color: '#3d2a5e', emoji: '🧙‍♀️', handStyle: 'robe' },
+    { id: 2, name: 'Fee', color: '#ff9ec9', emoji: '🧚', handStyle: 'fee' },
+    { id: 3, name: 'Monster', color: '#57d68d', emoji: '👹', handStyle: 'monster' },
+    { id: 4, name: 'Skelett', color: '#e8e4d8', emoji: '💀', handStyle: 'skelett' },
+    { id: 5, name: 'Oktopus', color: '#8a5fc9', emoji: '🐙', handStyle: 'oktopus' },
   ];
 
   const POWERS = [

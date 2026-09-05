@@ -18,7 +18,14 @@
       const btn = document.createElement('button');
       btn.className = 'skin-option' + (state.skin === skin.id ? ' selected' : '');
       btn.style.setProperty('--swatch', skin.color);
-      btn.textContent = skin.emoji;
+      const emojiSpan = document.createElement('span');
+      emojiSpan.className = 'skin-emoji';
+      emojiSpan.textContent = skin.emoji;
+      const nameSpan = document.createElement('span');
+      nameSpan.className = 'skin-name';
+      nameSpan.textContent = skin.name || '';
+      btn.appendChild(emojiSpan);
+      btn.appendChild(nameSpan);
       btn.addEventListener('click', () => { state.skin = skin.id; renderSkinPicker(); });
       wrap.appendChild(btn);
     });

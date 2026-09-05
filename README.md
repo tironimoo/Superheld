@@ -4,15 +4,15 @@ Ein Ego-Perspektive-Rollenspiel für Kinder: Erschaffe deinen eigenen Helden und
 
 ## Features
 
-- 🦸 Eigener Held mit wählbarem Aussehen und Namen
-- 🎮 Echte 3D-Ego-Perspektive: Joystick zum Laufen, Wischen zum Umschauen, Button zum Springen, Button zum Zaubern – inklusive sichtbarer Hände in der Ego-Perspektive mit einer eigenen Wurf-/Schlag-Animation pro Kraft
+- 🦸 **Breite Heldenauswahl**: Zauberer, Hexe, Fee, Monster, Skelett oder Oktopus – jede Wahl zeigt eine eigene Hand-/Tentakel-Form in der Ego-Perspektive (Knochenhand, Krallen, Tentakel mit Saugnäpfen ...)
+- 🎮 Echte 3D-Ego-Perspektive: Joystick zum Laufen, Wischen zum Umschauen, Button zum Springen, Button zum Zaubern – inklusive sichtbarer Hände mit einer eigenen Wurf-/Schlag-Animation pro Kraft
 - ♾️ **Unendliche, dynamisch generierte Welt**: das Gelände wird rund um den Spieler in Kacheln nachgeladen, während er läuft – es gibt kein Ende der Welt, jede Himmelsrichtung führt zu neuem Terrain, neuen Bergen, Seen und Gegnern
-- 🗺️ **Schatzsuche mit Kompass**: ein bewachter Schatz liegt irgendwo in der Welt – ein Kompass oben im HUD zeigt Richtung und Entfernung. Ist er gehoben, wartet der nächste, weiter entfernte und stärker bewachte Schatz
+- 🏰 **Schatzsuche mit Kompass und Endgegner**: ein bewachter Schatz liegt in einer Ruinenanlage irgendwo in der Welt, dazu ein mächtiger Endgegner (das Schattenross). Ein Kompass oben im HUD zeigt zuverlässig Richtung und Entfernung. Ist der Schatz gehoben, wartet der nächste, weiter entfernte und stärker bewachte Schatz mit noch zäherem Endgegner
 - 🌳🌿🪨💎 Viel dichtere, abwechslungsreichere Landschaft: Bäume, Büsche, Felsen und Kristalle sind über die ganze Welt verstreut statt an wenigen festen Stellen
 - 💎 **Interaktive Energiekristalle**: die früher rein dekorativen Kristalle lassen sich jetzt berühren – sie geben Sterne und laden sich danach wieder auf (ca. alle 20 Sekunden)
 - 🦘 **Sprung-Steuerung**: mit dem Sprung-Button über Hügel und Kanten hüpfen
 - 🌟 **Auflade-Megakraft**: den Zauber-Button gedrückt halten lädt einen mächtigen, größeren Mega-Zauber auf, der beim Loslassen mehrere Gegner auf einmal treffen kann und den Bildschirm erzittern lässt – kurz antippen feuert wie gewohnt einen normalen Schuss
-- 🦊🔥❄️🪨⚡👹👻🌙 **Acht verschiedene Gegner-Arten** mit eigenen Werten und eigener Silhouette (Hörner, Flammen, Eiszacken, Felsbrocken, Funken, Geisteraugen ...): der ausgeglichene Wicht, der zähe Steinling und Riesenwicht, sowie Flammling, Frostling, Funkling, die fliegende Schattenschwinge und der Traumgeist – jede Art hat eine Elementar-Schwäche und -Resistenz, jede der sechs Kräfte ist irgendwo Stärke und irgendwo Schwäche
+- 🦊🔥❄️🪨⚡🐦🦩🐴 **Neun verschiedene Gegner-Arten** mit eigenen Werten und eigener Optik: der ausgeglichene Wicht, der zähe Steinling und Riesenwicht, Flammling, Frostling und Funkling (alle auf Basis eines animierten 3D-Fuchses), die fliegende Schattenschwinge (ein echtes animiertes Papagei-Modell) und der Traumgeist (ein Flamingo-Modell) – sowie der mächtige Endgegner **Schattenross** (ein animiertes Pferdemodell) am Ziel jeder Schatzsuche. Jede Art hat eine Elementar-Schwäche und -Resistenz, jede der sechs Kräfte ist irgendwo Stärke und irgendwo Schwäche
 - 🩸 **Echtes Trefferpunkte-System**: Gegner halten je nach Art 2-3 Treffer aus, bei ihrer Schwäche doppelten, bei ihrer Resistenz nur halben Schaden – kein reiner Ein-Treffer-Kill mehr
 - 🥶🔥🌪️⚡ **Kräfte wirken drastisch unterschiedlich**: Eis friert Gegner ein, Feuer lässt sie brennen, Flugkraft wirbelt sie in die Luft, Blitz lässt sie zucken, Superkraft zerquetscht sie, der Regenbogenschild macht sie schwindelig – der Gegner ist für die Wirkdauer außer Gefecht und wird danach besiegt
 - 📈 **Echte Level-ups**: jede Kraftstufe erhöht spürbar den Schaden und verkürzt die Zeit bis zum Sieg (Stufe 1 ≈ 2 Sekunden, Stufe 5 deutlich schneller) sowie die Abklingzeit – Sterne in Kräfte zu investieren macht jetzt einen echten Unterschied
@@ -25,7 +25,7 @@ Ein Ego-Perspektive-Rollenspiel für Kinder: Erschaffe deinen eigenen Helden und
 - 👑 Aufsteigendes Rangsystem (Anfänger → Kraftpaket → Held → Superheld → Meisterheld → ÜBERHELD)
 - 🏆 Sammelbare Erfolge
 - 🎯 Sehr einfacher Schwierigkeitsgrad: keine echte Verlierbedingung, Schutzzeit beim Start, ständige kleine Belohnungen
-- 🎨 Deutlich verbesserte 3D-Grafik auf Basis von **three.js**: dynamisch nachladendes Terrain mit Bergen/Seen, Materialien, Schatten, Nebel, Punktlicht an den Kristallen, ein animiertes 3D-Fuchsmodell, ein echtes Baummodell mit magischen Glow-Blüten, leuchtende Glow-Sprites und ein **Bloom-Postprocessing** (weicher Glanz um Licht/Magie-Effekte, three.js' `UnrealBloomPass`)
+- 🎨 Deutlich verbesserte 3D-Grafik auf Basis von **three.js**: dynamisch nachladendes Terrain mit Bergen/Seen, Materialien, Schatten, Nebel, Punktlicht an den Kristallen, vier animierte 3D-Tiermodelle (Fuchs, Papagei, Flamingo, Pferd), ein echtes Baummodell mit magischen Glow-Blüten, texturierte Zauber-Projektile (Feuerwolke, Schneeflocke, Blitzfunke) und ein **Bloom-Postprocessing** (weicher Glanz um Licht/Magie-Effekte, three.js' `UnrealBloomPass`)
 - 📱 Vollständig touch-optimiert für Handy und Tablet, als installierbare Web-App (PWA), auch offline spielbar; für flüssige Performance auf mehr Geräten optimiert (begrenzte Pixel-Dichte, kompakte Schatten, geteilte Materialien für die nachgeladenen Gelände-Kacheln)
 - 💾 Fortschritt wird automatisch lokal gespeichert
 
@@ -35,7 +35,9 @@ Ein Ego-Perspektive-Rollenspiel für Kinder: Erschaffe deinen eigenen Helden und
 - **Bodentextur & Glow-Sprite** – aus dem `examples/`-Ordner von three.js (MIT-Lizenz)
 - **Baummodell** (`assets/tree.obj`) – aus dem `examples/`-Ordner von three.js (MIT-Lizenz)
 - **Fuchs-Gegnermodell** (`assets/models/fox.glb`, mit Lauf-/Renn-/Spähen-Animationen) – Basismodell [CC0 von PixelMannen](https://opengameart.org/content/fox-and-shiba), Rigging/Animation CC-BY 4.0 von [tomkranis (Sketchfab)](https://sketchfab.com/models/371dea88d7e04a76af5763f2a36866bc), glTF-Konvertierung via [KhronosGroup/glTF-Sample-Models](https://github.com/KhronosGroup/glTF-Sample-Models)
-- Alle übrige Grafik (Kristalle, Sterne, Held-Icons, Boden-Formgebung) ist prozedural mit three.js-Geometrien erzeugt
+- **Papagei-, Flamingo- und Pferdemodell** (`assets/models/Parrot.glb`, `Flamingo.glb`, `Horse.glb`, jeweils mit eingebauter Flug-/Galopp-Animation) – aus dem `examples/`-Ordner von three.js (MIT-Lizenz)
+- **Zauber-Projektil-Texturen** (Feuerwolke, Schneeflocke, Blitzfunke, Kreis-Glanz) – aus dem `examples/`-Ordner von three.js (MIT-Lizenz)
+- Alle übrige Grafik (Kristalle, Sterne, Held-Icons, Ruinen, Schatztruhe, Boden-Formgebung) ist prozedural mit three.js-Geometrien erzeugt
 
 ## Starten
 

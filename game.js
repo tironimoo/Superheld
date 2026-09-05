@@ -45,10 +45,21 @@ const MONSTER_TYPES = [
   { id: 'steinling', name: 'Steinling', tint: 0x8d6e63, hp: 3, weak: 'kraft', resist: 'blitz', model: 'fox', scale: 1.3, aura: 0xa1887f, attachment: 'rock' },
   { id: 'funkling', name: 'Funkling', tint: 0xfdd835, hp: 2, weak: 'schild', resist: 'flug', model: 'fox', scale: 0.9, aura: 0xfff2a8, attachment: 'spark' },
   { id: 'riesenwicht', name: 'Riesenwicht', tint: 0x6d8f6a, hp: 4, weak: null, resist: null, model: 'fox', scale: 1.6, aura: null, attachment: 'horns' },
-  { id: 'schatten', name: 'Schattenschwinge', tint: 0xb085f5, hp: 2, weak: 'flug', resist: 'kraft', model: 'shade', scale: 1, aura: 0x7e57c2, attachment: null },
-  { id: 'traumgeist', name: 'Traumgeist', tint: 0x5c4fd6, hp: 3, weak: 'blitz', resist: 'schild', model: 'shade', scale: 1.25, aura: 0x8a7cff, attachment: 'eyes' },
+  { id: 'schatten', name: 'Schattenschwinge', tint: 0xb085f5, hp: 2, weak: 'flug', resist: 'kraft', model: 'parrot', scale: 1, aura: 0x7e57c2, attachment: null, hover: true },
+  { id: 'traumgeist', name: 'Traumgeist', tint: 0x5c4fd6, hp: 3, weak: 'blitz', resist: 'schild', model: 'flamingo', scale: 1, aura: 0x8a7cff, attachment: null, hover: true },
+  { id: 'schattenross', name: 'Schattenross', tint: 0x2a1a45, hp: 7, weak: 'schild', resist: 'kraft', model: 'horse', scale: 1.8, aura: 0x7e57c2, attachment: null, boss: true },
 ];
 const MAX_HEALTH = 5;
+
+// Real animated glTF models beyond the fox, vendored from the three.js repo's
+// classic low-poly bird/horse examples — self-contained .glb with a single
+// looping morph-target animation each (no skeleton, so no per-clip switching).
+const MODEL_DEFS = {
+  fox: { url: 'assets/models/fox.glb', targetHeight: 1.05, multiClip: true },
+  parrot: { url: 'assets/models/Parrot.glb', targetHeight: 0.85 },
+  flamingo: { url: 'assets/models/Flamingo.glb', targetHeight: 1.5 },
+  horse: { url: 'assets/models/Horse.glb', targetHeight: 3.0 },
+};
 
 // World streaming: the terrain/decor is generated in square chunks around the
 // player and old chunks are disposed as the player wanders off — this is what
@@ -66,17 +77,17 @@ const CHARGE_MAX_MS = 1200;
 // and an impact burst profile (particle count/speed/colors/gravity).
 const POWER_VISUALS = {
   feuer: {
-    color: 0xff6b35, glow: 0xffb347, shape: 'sphere', size: 0.3, speed: 22,
+    color: 0xff6b35, glow: 0xffb347, shape: 'sphere', size: 0.3, speed: 22, tex: 'cloud',
     trailColor: 0xff8c42, trailRate: 70,
     burst: { count: 12, speed: [3, 6], colors: [0xff6b35, 0xffb347, 0xffd54f], gravity: 4, spreadUp: 0.6 },
   },
   eis: {
-    color: 0x4fc3f7, glow: 0xdcf6ff, shape: 'octahedron', size: 0.34, speed: 19,
+    color: 0x4fc3f7, glow: 0xdcf6ff, shape: 'octahedron', size: 0.34, speed: 19, tex: 'snowflake',
     trailColor: 0xbfe9ff, trailRate: 80,
     burst: { count: 10, speed: [2, 4], colors: [0x4fc3f7, 0xb3e5fc, 0xffffff], gravity: 1.5, spreadUp: 0.3 },
   },
   blitz: {
-    color: 0xfdd835, glow: 0xd9a6ff, shape: 'box', size: [0.16, 0.16, 0.55], speed: 34,
+    color: 0xfdd835, glow: 0xd9a6ff, shape: 'box', size: [0.16, 0.16, 0.55], speed: 34, tex: 'spark',
     trailColor: 0xfff2a8, trailRate: 40,
     burst: { count: 8, speed: [5, 9], colors: [0xfdd835, 0xab47bc, 0xffffff], gravity: 2, spreadUp: 0.4 },
   },
@@ -86,12 +97,12 @@ const POWER_VISUALS = {
     burst: { count: 10, speed: [2, 4.5], colors: [0x8d6e63, 0x6b4a2f, 0xffd54f], gravity: 9, spreadUp: 0.1 },
   },
   schild: {
-    color: 0xec407a, glow: 0x7e57c2, shape: 'torus', size: [0.22, 0.09], speed: 18,
+    color: 0xec407a, glow: 0x7e57c2, shape: 'torus', size: [0.22, 0.09], speed: 18, tex: 'circle',
     trailColor: 0xec407a, rainbow: true, trailRate: 55,
     burst: { count: 14, speed: [2.5, 5], colors: [0xec407a, 0x7e57c2, 0x4fc3f7, 0xffd76a, 0x63e6a0], gravity: 3, spreadUp: 0.5 },
   },
   flug: {
-    color: 0x81d4fa, glow: 0xffffff, shape: 'cone', size: [0.2, 0.5], speed: 20,
+    color: 0x81d4fa, glow: 0xffffff, shape: 'cone', size: [0.2, 0.5], speed: 20, tex: 'circle',
     trailColor: 0xe8f7ff, trailRate: 60,
     burst: { count: 12, speed: [1.5, 3.5], colors: [0xffffff, 0x81d4fa, 0xe0f7ff], gravity: 0.6, spreadUp: 0.8 },
   },
@@ -183,10 +194,12 @@ const World = {
     this.buildTerrainMaterial();
     this.buildWater();
     this.buildDecorTemplates();
+    this.loadPowerTextures();
     this.buildProjectileGeometries();
     this.buildChargeOrb();
     this.loadTreeModel();
-    this.loadFoxModel();
+    this.models = {};
+    Object.keys(MODEL_DEFS).forEach(key => this.loadGltfModel(key));
 
     this.buildHands();
 
@@ -204,11 +217,55 @@ const World = {
 
   setupQuest() {
     const state = ST.get();
-    const t = questTargetFor(state.questSeed, state.questLevel);
-    const y = this.heightAt(t.x, t.z);
+    let t = questTargetFor(state.questSeed, state.questLevel);
+    let y = this.heightAt(t.x, t.z);
+    for (let tries = 0; y < WATER_LEVEL + 1.0 && tries < 20; tries++) {
+      t = { x: t.x + Math.cos(tries * 2.4) * 8, z: t.z + Math.sin(tries * 2.4) * 8 };
+      y = this.heightAt(t.x, t.z);
+    }
     this.quest = { targetPos: new THREE.Vector3(t.x, y, t.z), level: state.questLevel, claimed: false, guards: [] };
     this.buildTreasure();
+    this.buildRuins();
     this.spawnGuards();
+    this.spawnBoss();
+  },
+
+  buildRuins() {
+    if (this.ruinsGroup) { this.scene.remove(this.ruinsGroup); this.ruinsGroup = null; }
+    const group = new THREE.Group();
+    const stoneMat = new THREE.MeshStandardMaterial({ color: 0x4a4560, roughness: 0.85 });
+    const roofMat = new THREE.MeshStandardMaterial({ color: 0x2e1f47, roughness: 0.7 });
+    const n = 6;
+    for (let i = 0; i < n; i++) {
+      const a = (i / n) * Math.PI * 2;
+      const r = 7.5;
+      const broken = i % 3 === 0;
+      const h = broken ? 2.2 : 4 + (i % 2) * 1.2;
+      const pillar = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.65, h, 8), stoneMat);
+      pillar.position.set(Math.cos(a) * r, h / 2, Math.sin(a) * r);
+      pillar.rotation.z = broken ? 0.3 : 0;
+      pillar.castShadow = true; pillar.receiveShadow = true;
+      group.add(pillar);
+      if (!broken) {
+        const roof = new THREE.Mesh(new THREE.ConeGeometry(0.75, 1.2, 8), roofMat);
+        roof.position.set(Math.cos(a) * r, h + 0.6, Math.sin(a) * r);
+        roof.castShadow = true;
+        group.add(roof);
+      }
+    }
+    group.position.copy(this.quest.targetPos);
+    this.scene.add(group);
+    this.ruinsGroup = group;
+  },
+
+  spawnBoss() {
+    const type = MONSTER_TYPES.find(t => t.boss);
+    if (!type) return;
+    const m = this.spawnMonsterSlot(1.6, { type, anchor: this.quest.targetPos });
+    m.isBoss = true;
+    m.hp += (this.quest.level - 1) * 2;
+    m.maxHp = m.hp;
+    this.quest.guards.push(m);
   },
 
   buildTreasure() {
@@ -274,6 +331,7 @@ const World = {
     this.quest.guards.forEach(g => { g.alive = false; if (g.group) g.group.visible = false; });
     this.quest.guards = [];
     if (this.treasureGroup) { this.scene.remove(this.treasureGroup); this.treasureGroup = null; }
+    if (this.ruinsGroup) { this.scene.remove(this.ruinsGroup); this.ruinsGroup = null; }
     this.quest.targetPos = null;
     setTimeout(() => this.setupQuest(), 3000);
   },
@@ -454,9 +512,19 @@ const World = {
 
   /* ---------------- shared helpers ---------------- */
 
-  makeGlowSprite(color, size, opacity) {
-    const tex = this._glowTex || (this._glowTex = new THREE.TextureLoader().load('assets/glow.png'));
-    const mat = new THREE.SpriteMaterial({ map: tex, color, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, fog: true, opacity: opacity ?? 0.7 });
+  loadPowerTextures() {
+    const loader = new THREE.TextureLoader();
+    this.powerTex = {
+      cloud: loader.load('assets/textures/cloud.png'),
+      snowflake: loader.load('assets/textures/snowflake2.png'),
+      spark: loader.load('assets/textures/spark1.png'),
+      circle: loader.load('assets/textures/circle.png'),
+    };
+  },
+
+  makeGlowSprite(color, size, opacity, tex) {
+    const useTex = tex || this._glowTex || (this._glowTex = new THREE.TextureLoader().load('assets/glow.png'));
+    const mat = new THREE.SpriteMaterial({ map: useTex, color, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, fog: true, opacity: opacity ?? 0.7 });
     const s = new THREE.Sprite(mat);
     s.scale.set(size, size, 1);
     return s;
@@ -494,29 +562,96 @@ const World = {
   buildHands() {
     const state = ST.get();
     const skin = ST.SKINS.find(s => s.id === state.skin) || ST.SKINS[0];
-    const skinMat = new THREE.MeshStandardMaterial({ color: new THREE.Color(skin.color), roughness: 0.55 });
-    const sleeveMat = new THREE.MeshStandardMaterial({ color: 0x3a2a6e, roughness: 0.7 });
-    const buildHand = (sign) => {
-      const g = new THREE.Group();
-      const sleeve = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.115, 0.34, 8), sleeveMat);
-      sleeve.position.set(0, -0.06, 0.2);
-      sleeve.rotation.x = Math.PI * 0.42;
-      const fist = new THREE.Mesh(new THREE.SphereGeometry(0.09, 10, 8), skinMat);
-      fist.position.set(0, 0.02, 0.02);
-      sleeve.castShadow = false; fist.castShadow = false;
-      g.add(sleeve, fist);
-      g.position.set(sign * 0.26, -0.32, -0.55);
-      g.rotation.z = sign * 0.25;
-      return g;
-    };
-    this.handL = buildHand(-1);
-    this.handR = buildHand(1);
+    this.handL = this.buildHandVariant(-1, skin.handStyle || 'robe', skin.color);
+    this.handR = this.buildHandVariant(1, skin.handStyle || 'robe', skin.color);
     const handsGroup = new THREE.Group();
     handsGroup.add(this.handL, this.handR);
     handsGroup.renderOrder = 999;
     this.camera.add(handsGroup);
     this.scene.add(this.camera);
     this.handsGroup = handsGroup;
+  },
+
+  // Each avatar archetype gets a distinct viewmodel hand silhouette instead of
+  // a single generic fist, so choosing Skelett/Oktopus/etc. actually shows.
+  buildHandVariant(sign, style, color) {
+    const g = new THREE.Group();
+    const accentMat = new THREE.MeshStandardMaterial({ color: new THREE.Color(color), roughness: 0.6 });
+    const skinToneMat = new THREE.MeshStandardMaterial({ color: 0xe8b98a, roughness: 0.55 });
+    const boneMat = new THREE.MeshStandardMaterial({ color: 0xe8e4d8, roughness: 0.5 });
+
+    if (style === 'oktopus') {
+      const curve = new THREE.CatmullRomCurve3([
+        new THREE.Vector3(0, 0, 0.15),
+        new THREE.Vector3(0, -0.05, -0.05),
+        new THREE.Vector3(sign * 0.07, -0.02, -0.28),
+        new THREE.Vector3(sign * 0.16, 0.07, -0.48),
+      ]);
+      const tube = new THREE.Mesh(new THREE.TubeGeometry(curve, 12, 0.065, 8, false), accentMat);
+      g.add(tube);
+      [0.25, 0.5, 0.75].forEach(t => {
+        const p = curve.getPointAt(t);
+        const sucker = new THREE.Mesh(new THREE.SphereGeometry(0.032, 6, 6), skinToneMat);
+        sucker.position.copy(p);
+        g.add(sucker);
+      });
+      const tip = new THREE.Mesh(new THREE.SphereGeometry(0.04, 8, 8), accentMat);
+      tip.position.copy(curve.getPointAt(1));
+      g.add(tip);
+    } else if (style === 'skelett') {
+      const forearm = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.06, 0.34, 6), boneMat);
+      forearm.position.set(0, -0.06, 0.2);
+      forearm.rotation.x = Math.PI * 0.42;
+      g.add(forearm);
+      const knuckle = new THREE.Mesh(new THREE.SphereGeometry(0.06, 8, 6), boneMat);
+      knuckle.position.set(0, 0.02, 0.02);
+      g.add(knuckle);
+      for (let i = -1; i <= 1; i++) {
+        const finger = new THREE.Mesh(new THREE.CylinderGeometry(0.014, 0.014, 0.14, 5), boneMat);
+        finger.position.set(i * 0.045, 0.06, -0.06);
+        finger.rotation.x = -0.3;
+        g.add(finger);
+      }
+    } else if (style === 'monster') {
+      const arm = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.12, 0.3, 8), accentMat);
+      arm.position.set(0, -0.08, 0.2);
+      arm.rotation.x = Math.PI * 0.42;
+      g.add(arm);
+      const fist = new THREE.Mesh(new THREE.SphereGeometry(0.1, 10, 8), accentMat);
+      fist.position.set(0, 0.02, 0.02);
+      g.add(fist);
+      const clawMat = new THREE.MeshStandardMaterial({ color: 0x1a1a1a, roughness: 0.4 });
+      for (let i = -1; i <= 1; i++) {
+        const claw = new THREE.Mesh(new THREE.ConeGeometry(0.02, 0.09, 6), clawMat);
+        claw.position.set(i * 0.05, 0.06, -0.08);
+        claw.rotation.x = -Math.PI / 2.3;
+        g.add(claw);
+      }
+    } else if (style === 'fee') {
+      const arm = new THREE.Mesh(new THREE.CylinderGeometry(0.055, 0.07, 0.32, 8), skinToneMat);
+      arm.position.set(0, -0.06, 0.2);
+      arm.rotation.x = Math.PI * 0.42;
+      g.add(arm);
+      const fist = new THREE.Mesh(new THREE.SphereGeometry(0.06, 10, 8), skinToneMat);
+      fist.position.set(0, 0.02, 0.02);
+      g.add(fist);
+      const sparkle = this.makeGlowSprite(new THREE.Color(color).getHex(), 0.3, 0.8);
+      sparkle.position.set(0, 0.08, -0.02);
+      g.add(sparkle);
+    } else {
+      // 'robe' — Zauberer/Hexe: a wide sleeve ending in a plain hand
+      const sleeve = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.13, 0.36, 8), accentMat);
+      sleeve.position.set(0, -0.06, 0.2);
+      sleeve.rotation.x = Math.PI * 0.42;
+      g.add(sleeve);
+      const fist = new THREE.Mesh(new THREE.SphereGeometry(0.08, 10, 8), skinToneMat);
+      fist.position.set(0, 0.02, 0.02);
+      g.add(fist);
+    }
+    g.traverse(c => { if (c.isMesh) c.castShadow = false; });
+    g.position.set(sign * 0.26, -0.32, -0.55);
+    g.rotation.z = sign * 0.25;
+    return g;
   },
 
   setHandPose(hand, sign, swing, anim, mirrorX) {
@@ -691,46 +826,65 @@ const World = {
     }
   },
 
-  loadFoxModel() {
-    new GLTFLoader().load('assets/models/fox.glb', (gltf) => {
+  loadGltfModel(key) {
+    const def = MODEL_DEFS[key];
+    new GLTFLoader().load(def.url, (gltf) => {
       const box = new THREE.Box3().setFromObject(gltf.scene);
       const height = box.max.y - box.min.y || 1;
-      this.foxScale = 1.05 / height;
-      this.foxTemplate = gltf.scene;
-      this.foxClips = gltf.animations;
-      this.monsters.forEach(m => { if (!m.built) this.buildMonsterVisual(m); });
+      this.models[key] = {
+        template: gltf.scene, clips: gltf.animations,
+        scaleFactor: def.targetHeight / height, multiClip: !!def.multiClip,
+      };
+      this.monsters.forEach(m => { if (m.type.model === key && !m.built) this.buildMonsterVisual(m); });
     });
   },
 
   buildMonsterVisual(m) {
     if (m.type.model === 'shade') { this.buildShadeVisual(m); return; }
-    if (!this.foxTemplate) return;
-    const inst = cloneSkeleton(this.foxTemplate);
-    inst.scale.setScalar(this.foxScale * m.type.scale);
+    this.buildGltfMonsterVisual(m);
+  },
+
+  buildGltfMonsterVisual(m) {
+    const modelData = this.models[m.type.model];
+    if (!modelData) return;
+    const inst = cloneSkeleton(modelData.template);
+    inst.scale.setScalar(modelData.scaleFactor * m.type.scale);
     const tint = m.type.tint;
     inst.traverse(c => {
       if (c.isMesh) {
         c.material = c.material.clone();
-        c.material.color.set(tint);
+        if (tint) c.material.color.set(tint);
         c.castShadow = true;
       }
     });
     const group = new THREE.Group();
     group.add(inst);
     group.add(this.makeShadowBlob(1.5 * m.type.scale));
-    const glow = this.makeGlowSprite(tint, 1.3, 0.35);
-    glow.position.y = 0.6;
+    const glow = this.makeGlowSprite(tint || 0xffffff, 1.3 * m.type.scale, 0.35);
+    glow.position.y = 0.6 * m.type.scale;
     group.add(glow);
+    if (m.type.boss) {
+      const bossLight = new THREE.PointLight(m.type.aura || tint, 1.6, 11, 2);
+      bossLight.position.y = 1.3 * m.type.scale;
+      group.add(bossLight);
+    }
     this.addTypeAura(m, group);
     this.addTypeAttachment(m, group);
     this.scene.add(group);
 
     const mixer = new THREE.AnimationMixer(inst);
-    const actions = {};
-    this.foxClips.forEach(clip => { actions[clip.name.toLowerCase()] = mixer.clipAction(clip); });
-    Object.values(actions).forEach(a => { a.enabled = true; });
-    const idle = actions.survey || Object.values(actions)[0];
-    idle.play();
+    let actions = {}, idle;
+    if (modelData.multiClip) {
+      modelData.clips.forEach(clip => { actions[clip.name.toLowerCase()] = mixer.clipAction(clip); });
+      Object.values(actions).forEach(a => { a.enabled = true; });
+      idle = actions.survey || Object.values(actions)[0];
+      idle.play();
+    } else {
+      const action = mixer.clipAction(modelData.clips[0]);
+      action.play();
+      actions = { survey: action, walk: action, run: action };
+      idle = action;
+    }
 
     m.group = group;
     m.mixer = mixer;
@@ -871,7 +1025,7 @@ const World = {
       status: null, statusUntil: 0, statusLethal: false, statusStart: 0, statusDrift: null,
     };
     this.monsters.push(m);
-    if (type.model === 'shade' || this.foxTemplate) this.buildMonsterVisual(m);
+    if (type.model === 'shade' || this.models[type.model]) this.buildMonsterVisual(m);
     return m;
   },
 
@@ -1029,7 +1183,8 @@ const World = {
     const mesh = new THREE.Mesh(this.projGeo[powerId], mat);
     if (visual.shape === 'cone') mesh.rotation.x = Math.PI / 2;
     mesh.scale.setScalar(scale);
-    const glow = this.makeGlowSprite(visual.glow, (mega ? 1.8 : 1.1) * scale, 0.75);
+    const powerTex = visual.tex ? this.powerTex[visual.tex] : null;
+    const glow = this.makeGlowSprite(visual.glow, (mega ? 1.8 : 1.1) * scale, 0.75, powerTex);
     mesh.add(glow);
     mesh.position.copy(this.player.pos);
     this.scene.add(mesh);
@@ -1042,12 +1197,12 @@ const World = {
   onMonsterKilled(m, visual) {
     const state = ST.get();
     state.kills += 1;
-    const reward = 3 + Math.floor(Math.random() * 2) + (m.maxHp - 1);
+    const reward = 3 + Math.floor(Math.random() * 2) + (m.maxHp - 1) + (m.isBoss ? 15 : 0);
     state.stars += reward;
     state.starsEarnedTotal += reward;
     ST.save();
     ST.sfx.hit();
-    window.G.ui.toast(`+${reward} ⭐`);
+    window.G.ui.toast(m.isBoss ? `👹 Endgegner besiegt! +${reward} ⭐` : `+${reward} ⭐`);
     window.G.ui.updateHud();
     this.spawnKillBurst(m.pos, visual);
     if (visual.shake) { this.shakeTime = 0.25; this.shakeMag = visual.shake; }
@@ -1144,7 +1299,7 @@ const World = {
       m._fireTick = (m._fireTick || 0) - dt;
       if (m._fireTick <= 0) {
         m._fireTick = 0.12;
-        this.spawnTrailParticle(this._v1.copy(m.pos).add(this._v2.set(0, 0.8, 0)), 0xff8c42);
+        this.spawnTrailParticle(this._v1.copy(m.pos).add(this._v2.set(0, 0.8, 0)), 0xff8c42, this.powerTex ? this.powerTex.cloud : null);
       }
     } else if (m.status === 'flug') {
       m.pos.y += dt * 2.2;
@@ -1170,8 +1325,8 @@ const World = {
     }
   },
 
-  spawnTrailParticle(pos, color) {
-    const sprite = this.makeGlowSprite(color, 0.45, 0.8);
+  spawnTrailParticle(pos, color, tex) {
+    const sprite = this.makeGlowSprite(color, 0.45, 0.8, tex);
     sprite.position.copy(pos);
     this.scene.add(sprite);
     this.particles.push({ obj: sprite, vel: new THREE.Vector3(0, 0.2, 0), life: 0.3, maxLife: 0.3, grav: 0.4 });
@@ -1179,12 +1334,13 @@ const World = {
 
   spawnKillBurst(pos, visual) {
     const b = visual.burst;
+    const tex = visual.tex ? this.powerTex[visual.tex] : null;
     for (let i = 0; i < b.count; i++) {
       const a = Math.random() * Math.PI * 2;
       const el = Math.random() * Math.PI * b.spreadUp;
       const speed = b.speed[0] + Math.random() * (b.speed[1] - b.speed[0]);
       const color = b.colors[Math.floor(Math.random() * b.colors.length)];
-      const sprite = this.makeGlowSprite(color, 0.5, 0.9);
+      const sprite = this.makeGlowSprite(color, 0.5, 0.9, tex);
       sprite.position.copy(pos).add(new THREE.Vector3(0, 0.6, 0));
       this.scene.add(sprite);
       this.particles.push({
@@ -1277,7 +1433,7 @@ const World = {
       }
     }
 
-    const hover = m.type.model === 'shade' ? 1.3 + Math.sin(now * 0.003 + m.hoverPhase) * 0.2 : 0;
+    const hover = (m.type.model === 'shade' || m.type.hover) ? 1.3 + Math.sin(now * 0.003 + m.hoverPhase) * 0.2 : 0;
     m.pos.y = this.heightAt(m.pos.x, m.pos.z) + hover;
 
     if (m.built) {
@@ -1436,7 +1592,7 @@ const World = {
         if (pr.trailTimer <= 0) {
           pr.trailTimer = pr.visual.trailRate;
           const c = pr.visual.rainbow ? new THREE.Color().setHSL((now * 0.0006) % 1, 0.85, 0.6).getHex() : pr.visual.trailColor;
-          this.spawnTrailParticle(pr.pos, c);
+          this.spawnTrailParticle(pr.pos, c, pr.visual.tex ? this.powerTex[pr.visual.tex] : null);
         }
       }
 
