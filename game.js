@@ -153,7 +153,10 @@ const World = {
   treeReady: false, pendingTrees: [], foxTemplate: null, foxClips: null,
   shakeTime: 0, shakeMag: 0,
   _lastChunkX: null, _lastChunkZ: null,
+  chunkQueue: [], _chunkQueueSet: new Set(),
+  _particlePool: [], _maxParticles: 220,
   _v1: new THREE.Vector3(), _v2: new THREE.Vector3(),
+  _burstOffset: new THREE.Vector3(0, 0.6, 0),
   _noise: new ImprovedNoise(),
   projGeo: {},
 
@@ -359,14 +362,20 @@ const World = {
     }
     return sum / norm;
   },
-  heightAt(x, z) {
+  // Height + the river-noise sample used for both the height carve and the
+  // riverbed color blend, computed once — buildChunk used to call fbm() for
+  // the river band twice per vertex (once inside heightAt, once again for
+  // color), which measurably added up over a whole chunk.
+  heightAndRiver(x, z) {
     const macro = this.fbm(x * 0.006, z * 0.006, 5, 4.7);
     const detail = this.fbm(x * 0.05 + 500, z * 0.05 + 500, 4, 9.3);
     let h = 4.5 + macro * 6.5 + detail * 1.3;
     const rn = this.fbm(x * 0.014 + 3000, z * 0.014 + 3000, 3, 6.1);
-    const riverBand = 1 - smoothstep(0, 0.085, Math.abs(rn));
-    h -= riverBand * 4.2;
-    return h;
+    h -= (1 - smoothstep(0, 0.085, Math.abs(rn))) * 4.2;
+    return { h, riverT: 1 - smoothstep(0, 0.1, Math.abs(rn)) };
+  },
+  heightAt(x, z) {
+    return this.heightAndRiver(x, z).h;
   },
   biomeColor(h, riverT, out) {
     const cLow = World._cLow, cMid = World._cMid, cHigh = World._cHigh, cSnow = World._cSnow, cRiverBed = World._cRiverBed;
@@ -419,10 +428,8 @@ const World = {
     for (let i = 0; i < pos.count; i++) {
       const lx = pos.getX(i), lz = pos.getZ(i);
       const wx = originX + lx, wz = originZ + lz;
-      const h = this.heightAt(wx, wz);
+      const { h, riverT } = this.heightAndRiver(wx, wz);
       pos.setY(i, h);
-      const rn = this.fbm(wx * 0.014 + 3000, wz * 0.014 + 3000, 3, 6.1);
-      const riverT = 1 - smoothstep(0, 0.1, Math.abs(rn));
       tmpColor.copy(this.biomeColor(h, riverT));
       colors[i * 3] = tmpColor.r; colors[i * 3 + 1] = tmpColor.g; colors[i * 3 + 2] = tmpColor.b;
     }
@@ -449,19 +456,49 @@ const World = {
     this.interactiveDecor = this.interactiveDecor.filter(e => e.chunkKey !== key);
   },
 
+  // Crossing a chunk boundary can need up to a whole new row/column of chunks
+  // (each with a heightmap + decor) at once. Building them all synchronously
+  // in a single frame was the main cause of the reported stutter, so new
+  // chunks are queued (nearest first) and drip-fed a few per frame instead —
+  // see processChunkQueue(), called every frame from update().
   updateChunks(force) {
     const p = this.player.pos;
     const ccx = Math.round(p.x / CHUNK_SIZE), ccz = Math.round(p.z / CHUNK_SIZE);
     if (!force && ccx === this._lastChunkX && ccz === this._lastChunkZ) return;
     this._lastChunkX = ccx; this._lastChunkZ = ccz;
+    const needed = [];
     for (let dz = -VIEW_RADIUS; dz <= VIEW_RADIUS; dz++) {
       for (let dx = -VIEW_RADIUS; dx <= VIEW_RADIUS; dx++) {
-        this.buildChunk(ccx + dx, ccz + dz);
+        const cx = ccx + dx, cz = ccz + dz, key = cx + ',' + cz;
+        if (!this.chunks.has(key) && !this._chunkQueueSet.has(key)) needed.push({ cx, cz, key });
+      }
+    }
+    needed.sort((a, b) => (Math.abs(a.cx - ccx) + Math.abs(a.cz - ccz)) - (Math.abs(b.cx - ccx) + Math.abs(b.cz - ccz)));
+    needed.forEach(n => { this._chunkQueueSet.add(n.key); this.chunkQueue.push(n); });
+    if (force) {
+      while (this.chunkQueue.length) {
+        const n = this.chunkQueue.shift();
+        this._chunkQueueSet.delete(n.key);
+        this.buildChunk(n.cx, n.cz);
       }
     }
     const keep = VIEW_RADIUS + 1;
     for (const [key, c] of this.chunks) {
       if (Math.abs(c.cx - ccx) > keep || Math.abs(c.cz - ccz) > keep) this.disposeChunk(key);
+    }
+    this.chunkQueue = this.chunkQueue.filter(n => {
+      const inRange = Math.abs(n.cx - ccx) <= keep && Math.abs(n.cz - ccz) <= keep;
+      if (!inRange) this._chunkQueueSet.delete(n.key);
+      return inRange;
+    });
+  },
+
+  processChunkQueue() {
+    const budget = 2;
+    for (let i = 0; i < budget && this.chunkQueue.length; i++) {
+      const n = this.chunkQueue.shift();
+      this._chunkQueueSet.delete(n.key);
+      if (!this.chunks.has(n.key)) this.buildChunk(n.cx, n.cz);
     }
   },
 
@@ -528,6 +565,31 @@ const World = {
     const s = new THREE.Sprite(mat);
     s.scale.set(size, size, 1);
     return s;
+  },
+
+  // Trail/impact particles are extremely short-lived and spawned in bursts
+  // (up to 26 at once on a treasure claim), so creating a fresh Sprite +
+  // SpriteMaterial for every single one caused GC-driven stutter right when
+  // several enemies died close together. Pooled sprites stay in the scene
+  // permanently and are just hidden/reconfigured for reuse instead.
+  acquireSprite(color, size, opacity, tex) {
+    let spr = this._particlePool.pop();
+    if (!spr) {
+      spr = this.makeGlowSprite(color, size, opacity, tex);
+      this.scene.add(spr);
+    } else {
+      spr.material.map = tex || this._glowTex;
+      spr.material.color.set(color);
+      spr.material.opacity = opacity;
+      spr.material.needsUpdate = true;
+      spr.scale.set(size, size, 1);
+      spr.visible = true;
+    }
+    return spr;
+  },
+  releaseSprite(spr) {
+    spr.visible = false;
+    this._particlePool.push(spr);
   },
   makeShadowBlob(size) {
     const tex = this._glowTex || (this._glowTex = new THREE.TextureLoader().load('assets/glow.png'));
@@ -765,7 +827,7 @@ const World = {
       glow.position.y = 1.3;
       crystalGroup.add(glow);
       let light = null;
-      if (this.crystalLightCount < 5) {
+      if (this.crystalLightCount < 3) {
         light = new THREE.PointLight(0x9d7bff, 1.2, 6, 2);
         light.position.y = 1.1;
         crystalGroup.add(light);
@@ -850,10 +912,27 @@ const World = {
     const inst = cloneSkeleton(modelData.template);
     inst.scale.setScalar(modelData.scaleFactor * m.type.scale);
     const tint = m.type.tint;
+    // Tinted materials are cached per monster type (not per instance): quest
+    // guards especially tend to repeat the same 4 types several times over,
+    // and sharing one tinted material per mesh-slot across all of them lets
+    // the renderer batch those draw calls instead of treating each as unique.
+    this._monsterMatCache = this._monsterMatCache || {};
+    let cachedMats = this._monsterMatCache[m.type.id];
+    if (!cachedMats) {
+      cachedMats = [];
+      inst.traverse(c => {
+        if (c.isMesh) {
+          const mat = c.material.clone();
+          if (tint) mat.color.set(tint);
+          cachedMats.push(mat);
+        }
+      });
+      this._monsterMatCache[m.type.id] = cachedMats;
+    }
+    let matIdx = 0;
     inst.traverse(c => {
       if (c.isMesh) {
-        c.material = c.material.clone();
-        if (tint) c.material.color.set(tint);
+        c.material = cachedMats[matIdx++];
         c.castShadow = true;
       }
     });
@@ -925,11 +1004,22 @@ const World = {
     m.hoverPhase = Math.random() * 10;
   },
 
+  // Geometries/materials here are cached and shared across every monster
+  // instance that uses them — with up to ~17 monsters alive at once (roaming
+  // pack + quest guards + boss), creating a fresh geometry and material per
+  // instance for these small decorations added up in draw calls and GPU
+  // state changes for no visual benefit, since each attachment kind is only
+  // ever used by one fixed-scale monster type anyway.
   addTypeAura(m, group) {
     if (!m.type.aura) return;
-    const ringGeo = new THREE.RingGeometry(0.55, 0.8, 20);
-    const ringMat = new THREE.MeshBasicMaterial({ color: m.type.aura, transparent: true, opacity: 0.4, side: THREE.DoubleSide, depthWrite: false, blending: THREE.AdditiveBlending });
-    const ring = new THREE.Mesh(ringGeo, ringMat);
+    if (!this._auraGeo) this._auraGeo = new THREE.RingGeometry(0.55, 0.8, 20);
+    this._auraMatCache = this._auraMatCache || {};
+    let mat = this._auraMatCache[m.type.aura];
+    if (!mat) {
+      mat = new THREE.MeshBasicMaterial({ color: m.type.aura, transparent: true, opacity: 0.4, side: THREE.DoubleSide, depthWrite: false, blending: THREE.AdditiveBlending });
+      this._auraMatCache[m.type.aura] = mat;
+    }
+    const ring = new THREE.Mesh(this._auraGeo, mat);
     ring.rotation.x = -Math.PI / 2;
     ring.position.y = 0.06;
     group.add(ring);
@@ -939,22 +1029,24 @@ const World = {
     const kind = m.type.attachment;
     if (!kind) return;
     const s = m.type.scale;
+    this._attachCache = this._attachCache || {};
+    const cache = this._attachCache;
     if (kind === 'flame') {
       const flame = this.makeGlowSprite(0xff8c42, 0.7 * s, 0.8);
       flame.position.set(0, 1.05 * s, 0);
       group.add(flame);
       m.attachSprite = flame;
     } else if (kind === 'spike') {
-      const mat = new THREE.MeshStandardMaterial({ color: 0xdcf6ff, emissive: 0x4fc3f7, emissiveIntensity: 0.4, roughness: 0.2 });
-      const spike = new THREE.Mesh(new THREE.OctahedronGeometry(0.22 * s, 0), mat);
+      if (!cache.spike) cache.spike = { geo: new THREE.OctahedronGeometry(0.22 * s, 0), mat: new THREE.MeshStandardMaterial({ color: 0xdcf6ff, emissive: 0x4fc3f7, emissiveIntensity: 0.4, roughness: 0.2 }) };
+      const spike = new THREE.Mesh(cache.spike.geo, cache.spike.mat);
       spike.scale.set(0.6, 1.6, 0.6);
       spike.position.set(0, 0.85 * s, -0.15 * s);
       spike.castShadow = true;
       group.add(spike);
     } else if (kind === 'rock') {
-      const mat = new THREE.MeshStandardMaterial({ color: 0x5c5470, roughness: 0.9 });
+      if (!cache.rock) cache.rock = { geo: new THREE.DodecahedronGeometry(0.16 * s, 0), mat: new THREE.MeshStandardMaterial({ color: 0x5c5470, roughness: 0.9 }) };
       [[-0.18, 1], [0.18, -1]].forEach(([off, r]) => {
-        const rock = new THREE.Mesh(new THREE.DodecahedronGeometry(0.16 * s, 0), mat);
+        const rock = new THREE.Mesh(cache.rock.geo, cache.rock.mat);
         rock.position.set(off * s, 0.95 * s, 0);
         rock.rotation.set(r, r * 0.5, 0);
         rock.castShadow = true;
@@ -965,19 +1057,19 @@ const World = {
       group.add(spark);
       m.attachSprite = spark;
     } else if (kind === 'horns') {
-      const mat = new THREE.MeshStandardMaterial({ color: 0x3d2b1f, roughness: 0.8 });
+      if (!cache.horns) cache.horns = { geo: new THREE.ConeGeometry(0.08 * s, 0.34 * s, 6), mat: new THREE.MeshStandardMaterial({ color: 0x3d2b1f, roughness: 0.8 }) };
       [[-0.16, -0.3], [0.16, 0.3]].forEach(([x, rz]) => {
-        const horn = new THREE.Mesh(new THREE.ConeGeometry(0.08 * s, 0.34 * s, 6), mat);
+        const horn = new THREE.Mesh(cache.horns.geo, cache.horns.mat);
         horn.position.set(x * s, 1.25 * s, 0.05 * s);
         horn.rotation.z = rz;
         horn.castShadow = true;
         group.add(horn);
       });
     } else if (kind === 'eyes') {
-      const mat = new THREE.MeshBasicMaterial({ color: 0xffe082 });
+      if (!cache.eyes) cache.eyes = { geo: new THREE.SphereGeometry(0.06 * s, 6, 6), mat: new THREE.MeshBasicMaterial({ color: 0xffe082 }) };
       m.eyeMeshes = [];
       [-0.16, 0.16].forEach(x => {
-        const eye = new THREE.Mesh(new THREE.SphereGeometry(0.06 * s, 6, 6), mat);
+        const eye = new THREE.Mesh(cache.eyes.geo, cache.eyes.mat);
         eye.position.set(x * s, 0.1 * s, 0.4 * s);
         group.add(eye);
         m.eyeMeshes.push(eye);
@@ -1326,9 +1418,9 @@ const World = {
   },
 
   spawnTrailParticle(pos, color, tex) {
-    const sprite = this.makeGlowSprite(color, 0.45, 0.8, tex);
+    if (this.particles.length >= this._maxParticles) return;
+    const sprite = this.acquireSprite(color, 0.45, 0.8, tex);
     sprite.position.copy(pos);
-    this.scene.add(sprite);
     this.particles.push({ obj: sprite, vel: new THREE.Vector3(0, 0.2, 0), life: 0.3, maxLife: 0.3, grav: 0.4 });
   },
 
@@ -1336,13 +1428,13 @@ const World = {
     const b = visual.burst;
     const tex = visual.tex ? this.powerTex[visual.tex] : null;
     for (let i = 0; i < b.count; i++) {
+      if (this.particles.length >= this._maxParticles) break;
       const a = Math.random() * Math.PI * 2;
       const el = Math.random() * Math.PI * b.spreadUp;
       const speed = b.speed[0] + Math.random() * (b.speed[1] - b.speed[0]);
       const color = b.colors[Math.floor(Math.random() * b.colors.length)];
-      const sprite = this.makeGlowSprite(color, 0.5, 0.9, tex);
-      sprite.position.copy(pos).add(new THREE.Vector3(0, 0.6, 0));
-      this.scene.add(sprite);
+      const sprite = this.acquireSprite(color, 0.5, 0.9, tex);
+      sprite.position.copy(pos).add(this._burstOffset);
       this.particles.push({
         obj: sprite,
         vel: new THREE.Vector3(Math.cos(a) * Math.cos(el) * speed, Math.sin(el) * speed + 1.2, Math.sin(a) * Math.cos(el) * speed),
@@ -1495,6 +1587,7 @@ const World = {
     p.pos.y = groundY + 1.6 + this.jumpOffset + (this.grounded ? Math.sin(this.bobPhase) * 0.04 : 0);
 
     this.updateChunks(false);
+    this.processChunkQueue();
     if (this.skyGroup) this.skyGroup.position.set(p.pos.x, 0, p.pos.z);
     if (this.water) { this.water.position.x = p.pos.x; this.water.position.z = p.pos.z; }
     if (this.sun) {
@@ -1613,7 +1706,7 @@ const World = {
       const s = Math.max(0.05, pa.life / pa.maxLife);
       pa.obj.material.opacity = 0.9 * s;
       pa.obj.scale.setScalar(0.5 * (0.4 + s));
-      if (pa.life <= 0) { this.scene.remove(pa.obj); this.particles.splice(i, 1); }
+      if (pa.life <= 0) { this.releaseSprite(pa.obj); this.particles.splice(i, 1); }
     }
   },
 
