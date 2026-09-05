@@ -1,7 +1,7 @@
 {
-  "name": "Überheld – Werde zum Superhelden!",
+  "name": "Überheld – Ego-Abenteuer",
   "short_name": "Überheld",
-  "description": "Ein Rollenspiel für Kinder: sammle Sterne, erlerne Superkräfte und werde zum Überheld!",
+  "description": "Ein Ego-Perspektive-Rollenspiel für Kinder: erkunde eine magische 3D-Welt, besiege Wichte, sammle Sterne und werde zum Überheld!",
   "start_url": "./index.html",
   "scope": "./",
   "display": "standalone",

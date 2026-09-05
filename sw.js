@@ -1,9 +1,13 @@
-const CACHE_NAME = 'ueberheld-cache-v1';
+const CACHE_NAME = 'ueberheld-cache-v2';
 const ASSETS = [
   './',
   './index.html',
   './style.css',
-  './app.js',
+  './math.js',
+  './geometry.js',
+  './state.js',
+  './world.js',
+  './ui.js',
   './manifest.json',
   './icon.svg',
 ];
