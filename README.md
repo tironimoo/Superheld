@@ -49,6 +49,23 @@ python3 -m http.server 8000
 
 und dann `http://localhost:8000` auf dem Handy/Tablet im Browser öffnen. Über "Zum Home-Bildschirm hinzufügen" lässt sich das Spiel wie eine App installieren.
 
+## Android-App
+
+Unter `android/` liegt eine schlanke Vollbild-Hülle (WebView), die die gehostete
+Seite lädt. Bewusst kein Trusted Web Activity: dafür bräuchte es eine
+Digital-Asset-Links-Datei auf der Domain-Wurzel (also ein zweites Repository),
+was für ein Canvas-Spiel wenig bringt.
+
+Weil die App nur die URL umschließt, ist ein **Spiel-Update einfach ein Deploy** –
+ein neues APK ist nur nötig, wenn sich Icon, Name oder Start-URL ändern.
+
+Gebaut wird per GitHub Actions (Workflow „Build Android APK"). Der Lauf hängt das
+fertige `ueberheld.apk` an ein GitHub-Release. Signiert wird mit dem Keystore aus
+den Repository-Secrets (`ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`,
+`ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD`); fehlen die, nutzt der Build den
+Debug-Schlüssel – das APK lässt sich installieren, aber spätere Updates nicht
+darüber legen.
+
 ## Dateien
 
 - `index.html` – Struktur der App, lädt three.js per Import-Map
@@ -59,3 +76,4 @@ und dann `http://localhost:8000` auf dem Handy/Tablet im Browser öffnen. Über 
 - `vendor/three/` – lokal eingebundenes three.js samt Loadern
 - `assets/` – Texturen, Baummodell, Fuchs-Gegnermodell
 - `manifest.json`, `sw.js`, `icon.svg` – PWA-Unterstützung für Installation auf Mobilgeräten
+- `android/` – Android-Hülle (WebView) für ein installierbares APK
