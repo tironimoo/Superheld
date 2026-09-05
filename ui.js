@@ -421,6 +421,24 @@
     });
     $('#btn-sound').textContent = state.soundOn ? '🔊 Ton an' : '🔇 Ton aus';
 
+    $('#btn-reset').addEventListener('click', async () => {
+      if (!confirm('Spiel neu laden und auf die neueste Version aktualisieren? Dein Fortschritt bleibt erhalten.')) return;
+      const btn = $('#btn-reset');
+      btn.disabled = true;
+      btn.textContent = '⏳ Wird aktualisiert...';
+      try {
+        if ('serviceWorker' in navigator) {
+          const regs = await navigator.serviceWorker.getRegistrations();
+          await Promise.all(regs.map(r => r.unregister()));
+        }
+        if ('caches' in window) {
+          const keys = await caches.keys();
+          await Promise.all(keys.map(k => caches.delete(k)));
+        }
+      } catch (e) { /* best effort */ }
+      location.reload();
+    });
+
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker.register('sw.js').catch(() => {});
     }
