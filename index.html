@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#1a0b3d">
+<meta name="description" content="Überheld – werde zum mächtigsten Superhelden! Ein Rollenspiel für Kinder.">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>Überheld – Werde zum Superhelden!</title>
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icon.svg">
+<link rel="manifest" href="manifest.json">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Cinzel+Decorative:wght@700;900&family=Baloo+2:wght@500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div id="starfield" aria-hidden="true"></div>
+
+<div id="app">
+
+  <!-- ===== HELDEN-ERSTELLUNG ===== -->
+  <section id="screen-create" class="screen">
+    <div class="panel intro-panel">
+      <h1 class="game-title">✨ ÜBERHELD ✨</h1>
+      <p class="subtitle">Erschaffe deinen Helden und werde zum mächtigsten Superhelden der Welt!</p>
+
+      <label class="field-label" for="hero-name">Wie heißt dein Held?</label>
+      <input id="hero-name" class="hero-input" type="text" maxlength="14" placeholder="z. B. Blitzstern" autocomplete="off">
+
+      <p class="field-label">Wähle dein Helden-Erscheinungsbild:</p>
+      <div id="skin-picker" class="skin-picker"></div>
+
+      <button id="btn-start-game" class="btn btn-primary btn-big">🚀 Abenteuer beginnen!</button>
+    </div>
+  </section>
+
+  <!-- ===== HUB / BASIS ===== -->
+  <section id="screen-hub" class="screen hidden">
+    <header class="hub-header">
+      <div class="hero-badge" id="hero-badge">
+        <div class="hero-avatar" id="hero-avatar"></div>
+      </div>
+      <div class="hero-info">
+        <div class="hero-name-row">
+          <span id="hub-hero-name" class="hero-name"></span>
+          <button id="btn-sound" class="icon-btn" title="Ton an/aus">🔊</button>
+        </div>
+        <div class="rank-row">
+          <span id="rank-title" class="rank-title">Anfänger</span>
+        </div>
+        <div class="rank-bar-track">
+          <div id="rank-bar-fill" class="rank-bar-fill"></div>
+        </div>
+      </div>
+      <div class="stars-counter">
+        <span class="star-icon">⭐</span>
+        <span id="stars-count">0</span>
+      </div>
+    </header>
+
+    <nav class="quest-map" id="quest-map">
+      <div class="path-line"></div>
+      <button class="mission-node" data-mission="monster" style="--delay:0">
+        <span class="node-emoji">👾</span>
+        <span class="node-label">Monster-Tippen</span>
+      </button>
+      <button class="mission-node" data-mission="memory" style="--delay:1">
+        <span class="node-emoji">🔮</span>
+        <span class="node-label">Farben-Zauber</span>
+      </button>
+      <button class="mission-node" data-mission="sterne" style="--delay:2">
+        <span class="node-emoji">🌠</span>
+        <span class="node-label">Sternenregen</span>
+      </button>
+    </nav>
+
+    <div class="hub-tabbar">
+      <button class="tab-btn active" data-tab="hub">🏰 Basis</button>
+      <button class="tab-btn" data-tab="powers">🦸 Kräfte</button>
+      <button class="tab-btn" data-tab="achievements">🏆 Erfolge</button>
+    </div>
+  </section>
+
+  <!-- ===== KRÄFTE ===== -->
+  <section id="screen-powers" class="screen hidden">
+    <header class="sub-header">
+      <button class="btn-back" data-back="hub">← Zurück</button>
+      <h2>Deine Superkräfte</h2>
+      <div class="stars-counter small"><span class="star-icon">⭐</span><span id="stars-count-2">0</span></div>
+    </header>
+    <div id="powers-grid" class="powers-grid"></div>
+  </section>
+
+  <!-- ===== ERFOLGE ===== -->
+  <section id="screen-achievements" class="screen hidden">
+    <header class="sub-header">
+      <button class="btn-back" data-back="hub">← Zurück</button>
+      <h2>Erfolge</h2>
+      <div></div>
+    </header>
+    <div id="achievements-grid" class="achievements-grid"></div>
+  </section>
+
+  <!-- ===== MISSION ===== -->
+  <section id="screen-mission" class="screen hidden">
+    <header class="sub-header">
+      <button class="btn-back" id="btn-quit-mission">✕ Abbrechen</button>
+      <h2 id="mission-title">Mission</h2>
+      <div class="mission-progress"><span id="mission-progress-text">0/0</span></div>
+    </header>
+    <p id="mission-hint" class="mission-hint"></p>
+    <div id="mission-arena" class="mission-arena"></div>
+  </section>
+
+  <!-- ===== BELOHNUNG / RANG-AUFSTIEG OVERLAY ===== -->
+  <div id="overlay" class="overlay hidden">
+    <div class="overlay-panel" id="overlay-panel"></div>
+  </div>
+
+  <canvas id="confetti-canvas"></canvas>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>

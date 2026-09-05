@@ -1,0 +1,15 @@
+{
+  "name": "Überheld – Werde zum Superhelden!",
+  "short_name": "Überheld",
+  "description": "Ein Rollenspiel für Kinder: sammle Sterne, erlerne Superkräfte und werde zum Überheld!",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#1a0b3d",
+  "theme_color": "#1a0b3d",
+  "lang": "de",
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}
